@@ -46,6 +46,7 @@ type InitializeResult struct {
 	}	`json:"serverInfo"`
 }
 
+// Return a string that contains the result of the request
 func ProcessInitializeRequest (data []byte) []byte {
 	req := RequestMessage[InitializeParams]{}
 
@@ -84,3 +85,4 @@ func ProcessInitializeRequest (data []byte) []byte {
 
 	return responseText
 }
+

@@ -6,18 +6,34 @@ import (
 	"errors"
 	"io"
 	"strconv"
-	// "os"
+	"log"
 )
 
 // func Decode (in *os.File) *bufio.Scanner {
-func Decode (input io.Reader) *bufio.Scanner {
+func ReceiveInput (input io.Reader) *bufio.Scanner {
 	scanner := bufio.NewScanner(input)
-	scanner.Split(inputParsingSplitFunc)
+	scanner.Split(decode)
 
 	return scanner
 }
 
-func inputParsingSplitFunc (data []byte, atEOF bool) (advance int, token []byte, err error) {
+func SendOutput (output io.Writer, response []byte) {
+	_, err := output.Write(response)
+	if err != nil {
+		log.Printf("Error while writing file to 'stdout': ", err.Error())
+	}
+}
+
+func Encode (dataContent []byte) []byte {
+	length := strconv.Itoa(len(dataContent))
+	dataHeader := []byte("Content-Length: " + length + "\r\n\r\n")
+	data := append(dataHeader, dataContent...)
+
+	return data
+}
+
+// func inputParsingSplitFunc (data []byte, atEOF bool) (advance int, token []byte, err error) {
+func decode (data []byte, atEOF bool) (advance int, token []byte, err error) {
 	indexStartData := bytes.Index(data, []byte("\r\n\r\n"))
 	if indexStartData == - 1 {
 		return 0, nil, nil

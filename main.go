@@ -19,10 +19,11 @@ func main() {
 	configureLogging()
 
 	// scanner := lsp.Decode(strings.NewReader(str))
-	scanner := lsp.Decode(os.Stdin)
+	scanner := lsp.ReceiveInput(os.Stdin)
 
 	var request lsp.RequestMessage[any]
 	var response []byte
+	var isRequestResponse bool
 
 	for scanner.Scan() {
 		data := scanner.Bytes()
@@ -32,16 +33,19 @@ func main() {
 
 		switch request.Method {
 		case "initialize":
-			response := lsp.ProcessInitializeRequest(data)
-
-			_, err := os.Stdout.Write(response)
-			if err != nil {
-				log.Printf("Error while writing file to 'stdout': ", err.Error())
-			}
+			isRequestResponse = true
+			response = lsp.ProcessInitializeRequest(data)
 		}
 
-		log.Printf("Sent json struct: %+v", response)
+		if isRequestResponse {
+			response = lsp.Encode(response)
+			lsp.SendOutput(os.Stdout, response)
+		}
+
 		response = []byte{}
+		isRequestResponse = false
+
+		log.Printf("Sent json struct: %+v", response)
 	}
 
 	if scanner.Err() != nil {
