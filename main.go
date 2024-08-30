@@ -35,7 +35,6 @@ func main() {
 		Params	T	`json:"params"`
 	}
 
-
 	var message RequestMessage[any]
 
 	for scanner.Scan() {
@@ -43,6 +42,79 @@ func main() {
 
 		json.Unmarshal(data, &message)
 		fmt.Fprintf(w, "json struct: %+v\n", message)
+
+		switch message.Method {
+		case "initialize":
+			fmt.Fprintln(w, "Initialization successful")
+
+			type InitializeParams struct {
+				ProcessId	int	`json:"processId"`
+				Capabilities map[string]interface{}	`json:"capabilities"`
+				ClientInfo	struct {
+					Name	string	`json:"name"`
+					Version	string	`json:"version"`
+				}	`json:"clientInfo"`
+				Locale	string	`json:"locale"`
+				RootUri	string	`json:"rootUri"`
+				Trace	map[string]interface{}	`json:"trace"`
+				WorkspaceFolders	any `json:"workspaceFolders"`
+				InitializationOptions	any	`json:"initializationOptions"`
+			}
+
+			req := RequestMessage[InitializeParams]{}
+			_ = json.Unmarshal(data, &req)
+
+			fmt.Fprintf(w, "\n requestMessageInitialize: %+v \n", req)
+
+			type ServerCapabilities struct {
+				TextDocumentSync	int	`json:"textDocumentSync"`
+				HoverProvider	bool	`json:"hoverProvider"`
+			}
+
+			type InitializeResult struct {
+				Capabilities ServerCapabilities	`json:"capabilities"`
+				ServerInfo	struct{
+					Name	string	`json:"name"`
+					Version	string	`json:"version"`
+				}	`json:"serverInfo"`
+			}
+
+
+			type ResponseMessage [T any] struct {
+				JsonRpc	string `json:"jsonrpc"`
+				Id	int	`json:"id"`
+				Result	T	`json:"result"`
+			}
+			response := ResponseMessage[InitializeResult] {
+				JsonRpc: "2.0",
+				Id: req.Id,
+				Result: InitializeResult{
+					Capabilities: ServerCapabilities{
+						TextDocumentSync: 1,
+						HoverProvider: true,
+					},
+				},
+			}
+
+			response.Result.ServerInfo.Name = "steveen_server"
+			response.Result.ServerInfo.Version = "0.1.0"
+
+			responseText, err := json.Marshal(response)
+			if err != nil {
+				fmt.Fprintln(w, "Error while marshalling : ", err.Error())
+			}
+
+			lengthBody := strconv.Itoa(len(responseText))
+			responseHeader := []byte("Content-Length: " + lengthBody + "\r\n\r\n")
+			responseText = append(responseHeader, responseText...)
+
+			fmt.Fprintln(w, "\n Server response to init: ", string(responseText))
+
+			_, err = os.Stdout.Write(responseText)
+			if err != nil {
+				fmt.Fprintln(w, "Error while writing file to 'stdout': ", err.Error())
+			}
+		}
 	}
 
 	if scanner.Err() != nil {
