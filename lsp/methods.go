@@ -1,10 +1,15 @@
 package lsp
 
 import (
-	"log"
+	"bufio"
+	"bytes"
 	"encoding/json"
-	"strconv"
+	"fmt"
+	"log"
+	"strings"
 )
+
+var filesOpenedByEditor = make(map[string]string)
 
 type RequestMessage[T any] struct {
 	JsonRpc	string `json:"jsonrpc"`
@@ -17,6 +22,12 @@ type ResponseMessage [T any] struct {
 	JsonRpc	string `json:"jsonrpc"`
 	Id	int	`json:"id"`
 	Result	T	`json:"result"`
+}
+
+type NotificationMessage [T any] struct {
+	JsonRpc	string `json:"jsonrpc"`
+	Method string `json:"method"`
+	Params	T	`json:"params"`
 }
 
 type InitializeParams struct {
@@ -46,19 +57,27 @@ type InitializeResult struct {
 	}	`json:"serverInfo"`
 }
 
-// Return a string that contains the result of the request
-func ProcessInitializeRequest (data []byte) []byte {
+// Notification publish Diagnostics Params
+type PublishDiagnosticsParams struct {
+	Uri	string	`json:"uri"`
+	Diagnostics	[]Diagnostic	`json:"diagnostics"`
+}
+
+type Diagnostic struct {
+	Range	Range	`json:"range"`
+	Message	string	`json:"message"`
+}
+
+func ProcessInitializeRequest (data []byte) (response []byte, root string) {
 	req := RequestMessage[InitializeParams]{}
 
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		log.Println("Error while unmarshalling data during 'initialize' phase: ", err.Error())
-		return nil
+		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
+		panic("error while unmarshalling data during 'initialize' phase, " + err.Error())
 	}
 
-	// log.Printf("\n requestMessageInitialize: %+v \n", req)
-
-	response := ResponseMessage[InitializeResult] {
+	res := ResponseMessage[InitializeResult] {
 		JsonRpc: "2.0",
 		Id: req.Id,
 		Result: InitializeResult{
@@ -69,19 +88,212 @@ func ProcessInitializeRequest (data []byte) []byte {
 		},
 	}
 
-	response.Result.ServerInfo.Name = "steveen_server"
-	response.Result.ServerInfo.Version = "0.1.0"
+	res.Result.ServerInfo.Name = "steveen_server"
+	res.Result.ServerInfo.Version = "0.1.0"
+
+	response, err = json.Marshal(res)
+	if err != nil {
+		log.Printf("fatal, marshalling failed \n response = %#v", res)
+		panic("error while 'marshalling' data during 'initialize' phase, " + err.Error())
+	}
+
+	root = req.Params.RootUri
+
+	return response, root
+}
+
+func ProcessInitializedNotificatoin(data []byte) {
+	// This is intentionally left empty since the LSP documentation do not describe anything
+	// The only reason for this notification (for now) is to register new server capabilities
+	// [Read more](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialized)
+	log.Println("Succesfully received 'initialized' notification")
+}
+
+type TextDocumentItem struct {
+	Uri	string	`json:"uri"`
+	Version	int	`json:"version"`
+	LanguageId	string	`json:"languageId"`
+	Text	string	`json:"text"`
+}
+
+type DidOpenTextDocumentParams struct {
+	TextDocument TextDocumentItem	`json:"textDocument"`
+}
+
+func ProcessDidOpenTextDocumentNotification (data []byte) (fileURI string, fileContent []byte) {
+	request := RequestMessage[DidOpenTextDocumentParams]{}
+
+	err := json.Unmarshal(data, &request)
+	if err != nil {
+		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
+		panic("error while unmarshalling data during 'textDocument/didOpen' phase, " + err.Error())
+	}
+
+	documentURI := request.Params.TextDocument.Uri
+	documentContent := request.Params.TextDocument.Text
+	filesOpenedByEditor[documentURI] = documentContent
+
+	log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
+
+	return documentURI, []byte(documentContent)
+}
+
+type Position struct {
+	Line	uint	`json:"line"`
+	Character uint	`json:"character"`
+}
+
+type Range struct {
+	Start	Position	`json:"start"`
+	End	Position	`json:"end"`
+}
+
+type TextDocumentContentChangeEvent struct {
+	Range Range	`json:"range"`
+	RangeLength	uint	`json:"rangeLength"`
+	Text	string	`json:"text"`
+}
+
+type DidChangeTextDocumentParams struct {
+	TextDocument	TextDocumentItem	`json:"textDocument"`
+	ContentChanges	[]TextDocumentContentChangeEvent	`json:"contentChanges"`
+}
+
+func ProcessDidChangeTextDocumentNotification (data []byte) (fileURI string, fileContent []byte) {
+	var request RequestMessage[DidChangeTextDocumentParams]
+
+	err := json.Unmarshal(data, &request)
+	if err != nil {
+		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
+		panic("error while unmarshalling data during 'textDocument/didChange' phase, " + err.Error())
+	}
+
+	documentChanges := request.Params.ContentChanges
+	if len(documentChanges) > 1 {
+		log.Printf("fatal, unexpected data type (incremental change instead of full text). \n request = %#v\n", request)
+		panic("the server can't handle incremental change yet in 'textDocument/didChange'. " +
+			"register the correct server capabilities in 'initialize' phase")
+	}
+
+	if len(documentChanges) == 0 {
+		log.Printf("error detected from client request. 'documentChanges' field cannot be empty. \n request = %#v", request)
+		return "", nil
+	}
+
+	documentContent := documentChanges[0].Text
+	documentURI := request.Params.TextDocument.Uri
+	filesOpenedByEditor[documentURI] = documentContent
+
+	log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
+
+	return documentURI, []byte(documentContent)
+}
+
+type DidCloseTextDocumentParams struct {
+	TextDocument	TextDocumentItem	`json:"textDocument"`
+}
+
+func ProcessDidCloseTextDocumentNotification (data []byte) (fileURI string, fileContent []byte) {
+	var request RequestMessage[DidCloseTextDocumentParams]
+
+	err := json.Unmarshal(data, &request)
+	if err != nil {
+		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
+		panic("error while unmarshalling data during 'textDocument/didClose' phase, " + err.Error())
+	}
+
+	documentPath := request.Params.TextDocument.Uri
+	documentContent := request.Params.TextDocument.Text
+	delete(filesOpenedByEditor, documentPath)
+
+	log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
+
+	return documentPath, []byte(documentContent)
+}
+
+type MarkupContent struct {
+	Kind	string	`json:"kind"`
+	Value	string	`json:"value"`
+}
+
+func ProcessHoverRequest (data []byte) []byte {
+	type HoverParams struct {
+		TextDocument	TextDocumentItem	`json:"textDocument"`
+		Position	Position	`json:"position"`
+	}
+
+	var request RequestMessage[HoverParams]
+
+	err := json.Unmarshal(data, &request)
+	if err != nil {
+		log.Println("Error, unable unmarshal DidOpenTExtDocument Notification: ", err.Error())
+		// TODO: return appropriate error message
+		return nil
+	}
+
+	documentPath := request.Params.TextDocument.Uri
+	documentContent := filesOpenedByEditor[documentPath]
+	countLine := int(request.Params.Position.Line)
+	countChar := int(request.Params.Position.Character)
+
+	scanner := bufio.NewScanner(strings.NewReader(documentContent))
+	for i := 0; i <= countLine; i++ {
+		scanner.Scan()
+	}
+
+	line := scanner.Text()
+
+	log.Printf("====> line: %+v :::: characterCount: %d", line, countChar)
+
+	var word string
+
+	character := line[countChar]
+	indexCursor := bytes.ContainsAny([]byte{character}, " ,.-<>/\\")
+	word = string(character)
+
+	if ! indexCursor {
+		indexRightSeparator := strings.IndexAny(line[countChar:], " ,.-<>/\\")
+		indexLeftSeparator := strings.LastIndexAny(line[:countChar], " ,.-<>/\\")
+
+		if indexLeftSeparator == -1 {
+			indexLeftSeparator = -1
+		}
+
+		if indexRightSeparator == -1 {
+			indexRightSeparator = len(line)
+		} else {
+			indexRightSeparator += countChar
+		}
+
+		word = line[indexLeftSeparator + 1 : indexRightSeparator]
+	}
+
+
+	type HoverResult struct {
+		Contents	MarkupContent	`json:"contents"`
+		Range	Range	`json:"range,omitempty"`
+	}
+	
+	response := ResponseMessage[HoverResult]{
+		JsonRpc: request.JsonRpc,
+		Id: request.Id,
+		Result: HoverResult{
+			Contents: MarkupContent{
+				Kind: "plaintext",
+				Value: fmt.Sprintf("%s -- LSP", word),
+				// Value: fmt.Sprintf("%c -- LSP", character),
+			},
+			Range: Range{
+			},
+		},
+	}
 
 	responseText, err := json.Marshal(response)
 	if err != nil {
-		log.Printf("Error while marshalling : ", err.Error())
+		log.Println("Error while marshalling ResponseMessageHoverResult: ", err.Error())
+		// TODO: Need to better handle error case
+		return nil
 	}
-
-	lengthBody := strconv.Itoa(len(responseText))
-	responseHeader := []byte("Content-Length: " + lengthBody + "\r\n\r\n")
-	responseText = append(responseHeader, responseText...)
-
-	// log.Printf("\n Server response to init: %+v", string(responseText))
 
 	return responseText
 }

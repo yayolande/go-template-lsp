@@ -17,11 +17,20 @@ func ReceiveInput (input io.Reader) *bufio.Scanner {
 	return scanner
 }
 
+// For most case, 'SendToLspClient()' is prefered since it automatically encode the response.
+// Send response data over output. The respose data must be 'enconded' first
 func SendOutput (output io.Writer, response []byte) {
 	_, err := output.Write(response)
 	if err != nil {
 		log.Printf("Error while writing file to 'stdout': ", err.Error())
 	}
+}
+
+// Send 'response' to LSP client over the wire ('output'). 
+// Encoding is done within this function, so it is not advised to do another encoding
+func SendToLspClient(output io.Writer, response []byte) {
+	response = Encode(response)
+	SendOutput(output, response)
 }
 
 func Encode (dataContent []byte) []byte {
