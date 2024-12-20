@@ -14,7 +14,15 @@ import (
 	"github.com/yayolande/gota"
 	"github.com/yayolande/gota/parser"
 	"github.com/yayolande/gota/lexer"
+	checker "github.com/yayolande/gota/analyzer"
 )
+
+type workSpaceStore struct {
+	rawFiles				map[string][]byte
+	parsedFiles			map[string]*parser.GroupStatementNode
+	openFilesAnalyzed	map[string]*checker.FileDefinition
+	openedFilesError	map[string][]lexer.Error
+}
 
 func main() {
 
@@ -33,12 +41,14 @@ func main() {
 	// Otherwise, a nasty bug will appear (value not synced with the rest of the app)
 	// ******************************************************************************
 
+	storage := &workSpaceStore{}
+
 	rootPathNotication := make(chan string, 2)
 	textChangedNotification := make(chan bool, 2)
 	textFromClient := make(map[string][]byte)
 	muTextFromClient := new(sync.Mutex)
 
-	go ProcessDiagnosticNotification(rootPathNotication, textChangedNotification, textFromClient, muTextFromClient)
+	go ProcessDiagnosticNotification(storage, rootPathNotication, textChangedNotification, textFromClient, muTextFromClient)
 
 	var request lsp.RequestMessage[any]
 	var response []byte
@@ -56,6 +66,8 @@ func main() {
 		// TODO: All over the code base, replace 'json' module by a custom made 'stringer' tool
 		// because it is more performat
 		json.Unmarshal(data, &request)
+		// log.Printf("Received json struct: %q\n", data)
+
 		log.Printf("Received json struct: %+v\n", request)
 
 		// TODO: behavior of the 'method' do not respect the LSP spec. For instance 'initialize' must only happen once
@@ -86,6 +98,9 @@ func main() {
 		case "textDocument/hover":
 			isRequestResponse = true
 			response = lsp.ProcessHoverRequest(data)
+		case "textDocument/definition":
+			isRequestResponse = true
+			response = lsp.ProcessGoToDefinition(data, storage.openFilesAnalyzed)
 		}
 
 		if isRequestResponse {
@@ -98,7 +113,7 @@ func main() {
 
 		// log.Printf("Sent json struct: %+v", string(response))
 
-		response = []byte{}
+		response = nil
 		isRequestResponse = false
 	}
 
@@ -149,7 +164,7 @@ func notifyTheRootPath(rootPathNotication chan string, rootURI string) {
 }
 
 // Independently diagnostic code source and send notifications to client
-func ProcessDiagnosticNotification(rootPathNotication chan string, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
+func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication chan string, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
 	if rootPathNotication == nil || textChangedNotification == nil {
 		panic("channel(s) for 'ProcessDiagnosticNotification()' not properly initialized")
 	}
@@ -172,16 +187,16 @@ func ProcessDiagnosticNotification(rootPathNotication chan string, textChangedNo
 	targetExtension = ".html"
 	// TODO: When I use the value below, I get nasty error (panic). Investigate it later on
 	// targetExtension = ".tmpl"
-	rawFiles := gota.OpenProjectFiles(rootPath, targetExtension)
+	storage.rawFiles = gota.OpenProjectFiles(rootPath, targetExtension)
 
 	// Since the client only recognize URI, it is better to adopt this early 
 	// on the server as well to avoid perpetual conversion from 'uri' to 'path'
-	rawFiles = moveKeysFromFilePathToUri(rawFiles)
+	storage.rawFiles = moveKeysFromFilePathToUri(storage.rawFiles)
 
-	// TODO: should I check: len(rawFiles) == len(projectFiles)
-	projectFiles, _ := gota.ParseFilesInWorkspace(rawFiles)
-	if projectFiles == nil {
-		projectFiles = make(map[string]*parser.GroupStatementNode)
+	// TODO: should I check: len(rawFiles) == len(storage.parsedFiles)
+	storage.parsedFiles, _ = gota.ParseFilesInWorkspace(storage.rawFiles)
+	if storage.parsedFiles == nil {
+		storage.parsedFiles = make(map[string]*parser.GroupStatementNode)
 	}
 
 	// TODO: For improved perf. also fetch gota.getWorkspaceTemplateDefinition()
@@ -197,8 +212,9 @@ func ProcessDiagnosticNotification(rootPathNotication chan string, textChangedNo
 	}
 
 	// watch for client edit notification (didChange, ...)
+	storage.openFilesAnalyzed = make(map[string]*checker.FileDefinition)
+	storage.openedFilesError = make(map[string][]gota.Error)
 	cloneTextFromClient := make(map[string][]byte)
-	openedFilesError := make(map[string][]gota.Error)
 
 	for _ = range textChangedNotification {
 		if len(textFromClient) == 0 {
@@ -230,11 +246,11 @@ func ProcessDiagnosticNotification(rootPathNotication chan string, textChangedNo
 				continue
 			}
 
-			rawFiles[uri] = fileContent
+			storage.rawFiles[uri] = fileContent
 			parseTree, localErrs := gota.ParseSingleFile(fileContent)
 
-			projectFiles[uri] = parseTree
-			openedFilesError[uri] = localErrs
+			storage.parsedFiles[uri] = parseTree
+			storage.openedFilesError[uri] = localErrs
 
 			delete(cloneTextFromClient, uri)
 		}
@@ -246,11 +262,13 @@ func ProcessDiagnosticNotification(rootPathNotication chan string, textChangedNo
 		}
 
 		var errs []gota.Error
-		for uri, _ := range openedFilesError {
-			localErrs := gota.DefinitionAnalysisSingleFile(uri, projectFiles)
+		for uri, _ := range storage.openedFilesError {
+			file, localErrs := gota.DefinitionAnalysisSingleFile(uri, storage.parsedFiles)
 
-			openedFilesError[uri] = append(openedFilesError[uri], localErrs...)
-			errs = openedFilesError[uri]
+			storage.openFilesAnalyzed[uri] = file
+
+			storage.openedFilesError[uri] = append(storage.openedFilesError[uri], localErrs...)
+			errs = storage.openedFilesError[uri]
 
 			notification = clearPushDiagnosticNotification(notification)
 			notification = setParseErrosToDiagnosticsNotification(errs, notification)

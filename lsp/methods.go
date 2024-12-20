@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+
+	"github.com/yayolande/gota"
+	"github.com/yayolande/gota/lexer"
+	checker "github.com/yayolande/gota/analyzer"
 )
 
 var filesOpenedByEditor = make(map[string]string)
@@ -47,6 +51,7 @@ type InitializeParams struct {
 type ServerCapabilities struct {
 	TextDocumentSync	int	`json:"textDocumentSync"`
 	HoverProvider	bool	`json:"hoverProvider"`
+	DefinitionProvider bool `json:"definitionProvider"`
 }
 
 type InitializeResult struct {
@@ -68,6 +73,18 @@ type Diagnostic struct {
 	Message	string	`json:"message"`
 }
 
+func convertParserRangeToLspRange(parserRange lexer.Range) Range {
+	reach := Range{}
+
+	reach.Start.Line = uint(parserRange.Start.Line)
+	reach.Start.Character = uint(parserRange.Start.Character)
+
+	reach.End.Line = uint(parserRange.End.Line)
+	reach.End.Character = uint(parserRange.End.Character)
+
+	return reach
+}
+
 func ProcessInitializeRequest (data []byte) (response []byte, root string) {
 	req := RequestMessage[InitializeParams]{}
 
@@ -84,6 +101,7 @@ func ProcessInitializeRequest (data []byte) (response []byte, root string) {
 			Capabilities: ServerCapabilities{
 				TextDocumentSync: 1,
 				HoverProvider: true,
+				DefinitionProvider: true,
 			},
 		},
 	}
@@ -296,5 +314,78 @@ func ProcessHoverRequest (data []byte) []byte {
 	}
 
 	return responseText
+}
+
+type TextDocumentIdentifier struct {
+	Uri	string	`json:"uri"`
+}
+
+type TextDocumentPositionParams struct {
+	TextDocument	TextDocumentIdentifier `json:"textDocument"`
+	Position			Position `json:"position"`
+}
+
+type Location struct {
+	Uri	string `json:"uri"`
+	Range	Range	`json:"range"`
+}
+
+// TODO: this implementation work so well that it should be propagated to the other 'Params'
+type DefinitionParams struct {
+	TextDocumentPositionParams
+}
+
+type DefinitionResults struct {
+	Location
+}
+
+func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefinition) []byte {
+	if len(openFiles) == 0 {
+		panic("cannot compute the source of 'go-to-definition' because no files have been opened on the server")
+	}
+
+	var req RequestMessage[DefinitionParams]
+
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		log.Println("error while decoding/unmarshalling lsp client data, ", err.Error())
+		return nil
+	}
+
+	position := lexer.Position{
+		Line: int(req.Params.Position.Line),
+		Character: int(req.Params.Position.Character),
+	}
+
+	file := openFiles[req.Params.TextDocument.Uri]
+	if file == nil {
+		panic("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
+	}
+
+	fileNameURI, reach := gota.GoToDefinition(file, position)
+
+	var res ResponseMessage[[]DefinitionResults]
+
+	res.Id = req.Id
+	res.JsonRpc = req.JsonRpc
+
+	result := DefinitionResults{}
+	result.Uri = fileNameURI
+	result.Range = convertParserRangeToLspRange(reach)
+
+	res.Result = append(res.Result, result)
+	if fileNameURI == "" {
+		res.Result = nil
+	}
+
+	data, err = json.Marshal(res)
+	if err != nil {
+		log.Println("error while encoding/marshalling data for lsp client, ", err.Error())
+		return nil
+	}
+
+	log.Printf("definition found : %#v\n", res)
+
+	return data
 }
 
