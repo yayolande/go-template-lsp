@@ -339,7 +339,7 @@ type DefinitionResults struct {
 	Location
 }
 
-func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefinition) []byte {
+func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefinition, rawFiles map[string][]byte) (response []byte, fileName string, fileContent []byte) {
 	if len(openFiles) == 0 {
 		panic("cannot compute the source of 'go-to-definition' because no files have been opened on the server")
 	}
@@ -349,7 +349,7 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 	err := json.Unmarshal(data, &req)
 	if err != nil {
 		log.Println("error while decoding/unmarshalling lsp client data, ", err.Error())
-		return nil
+		return nil, "", nil
 	}
 
 	position := lexer.Position{
@@ -381,11 +381,24 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 	data, err = json.Marshal(res)
 	if err != nil {
 		log.Println("error while encoding/marshalling data for lsp client, ", err.Error())
-		return nil
+		return nil, fileNameURI, nil
 	}
 
 	log.Printf("definition found : %#v\n", res)
 
-	return data
+	_, found := openFiles[fileNameURI]
+
+	if ! found {
+		fileName = fileNameURI
+		fileContent, found = rawFiles[fileNameURI]
+
+		if ! found {
+			panic("LSP server wasn't able to find in-memory content for file " + fileNameURI + 
+				". all projects files should be present in-memory for accurate computation")
+		}
+	}
+
+
+	return data, fileName, fileContent
 }
 

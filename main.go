@@ -53,6 +53,8 @@ func main() {
 	var request lsp.RequestMessage[any]
 	var response []byte
 	var isRequestResponse bool	// Response: true <====> Notification: false
+	var fileURI string
+	var fileContent []byte
 
 	// TODO: What if 'initialize' request is not sent as first request ?
 	// Check LSP documentation to learn how to handle those issues
@@ -86,12 +88,13 @@ func main() {
 			lsp.ProcessInitializedNotificatoin(data)
 		case "textDocument/didOpen":
 			isRequestResponse = false
-			fileURI, fileContent := lsp.ProcessDidOpenTextDocumentNotification(data)
+			fileURI, fileContent = lsp.ProcessDidOpenTextDocumentNotification(data)
 
 			insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		case "textDocument/didChange":
 			isRequestResponse = false
-			fileURI, fileContent := lsp.ProcessDidChangeTextDocumentNotification(data)
+			fileURI, fileContent = lsp.ProcessDidChangeTextDocumentNotification(data)
+
 			insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		case "textDocument/didClose":
 			// TODO: Not sure what to do
@@ -100,7 +103,9 @@ func main() {
 			response = lsp.ProcessHoverRequest(data)
 		case "textDocument/definition":
 			isRequestResponse = true
-			response = lsp.ProcessGoToDefinition(data, storage.openFilesAnalyzed)
+			response, fileURI, fileContent = lsp.ProcessGoToDefinition(data, storage.openFilesAnalyzed, storage.rawFiles)
+
+			insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		}
 
 		if isRequestResponse {
@@ -129,6 +134,10 @@ func main() {
 // In other word, if the same document is inserted many time, only the most recent will be processed when 
 // concerned goroutine is ready to do so
 func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
+	if content == nil || uri == "" {
+		return
+	}
+
 	muTextFromClient.Lock()
 	textFromClient[uri] = content
 	muTextFromClient.Unlock()
@@ -240,7 +249,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			// TODO; this code below will one day cause trouble
 			// In fact, if a file opened by the lsp client is not in the root or haven't the mandatory exntension
 			// then the condition after the loop below will fail and launch a panic
-			// if len(cloneTextFromClient) != 0 {
+			// if len(cloneTextFromClient) != 0 
 			if ! isFileInsideWorkspace(uri, rootPath, targetExtension) {
 				log.Printf("oups ... this file is not considerated part of the project ::: file = %s\n", uri)
 				continue
@@ -252,22 +261,23 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			storage.parsedFiles[uri] = parseTree
 			storage.openedFilesError[uri] = localErrs
 
-			delete(cloneTextFromClient, uri)
+			// delete(cloneTextFromClient, uri)
 		}
 
-		if len(cloneTextFromClient) != 0 {
-			log.Printf("error not empty element. \n cloneTextFromClient = %s \n", cloneTextFromClient)
-			log.Printf("textFromClient = %s \n rootPathUri = %s \n", textFromClient, rootPath)
-			panic("error, 'cloneTextFromClient' is not empty. It must be empty at this point for the next for-loop iteration")
-		}
-
-		var errs []gota.Error
 		for uri, _ := range storage.openedFilesError {
 			file, localErrs := gota.DefinitionAnalysisSingleFile(uri, storage.parsedFiles)
 
 			storage.openFilesAnalyzed[uri] = file
-
 			storage.openedFilesError[uri] = append(storage.openedFilesError[uri], localErrs...)
+		}
+
+		var errs []gota.Error
+		for uri, _ := range cloneTextFromClient {
+			// file, localErrs := gota.DefinitionAnalysisSingleFile(uri, storage.parsedFiles)
+
+			// storage.openFilesAnalyzed[uri] = file
+
+			// storage.openedFilesError[uri] = append(storage.openedFilesError[uri], localErrs...)
 			errs = storage.openedFilesError[uri]
 
 			notification = clearPushDiagnosticNotification(notification)
@@ -285,6 +295,8 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			// log.Printf("\n\n simpler notif: \n %#v \n", notification)
 			log.Printf("\n\nmessage sent to client :: msg = %#v\n\n", notification)
 		}
+
+		clear(cloneTextFromClient)
 
 		// clear(textFromClient)
 	}
