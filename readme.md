@@ -4,7 +4,7 @@
 
 Go template is incredible. But the lack of editor/IDE support is a crime. This makes the feedback loop between coding and bug detection a real challenge.
 
-This project (GO Template LSP) aim to tackle that issue. From now, instantaneous diagnostics and type checking are a breeze.
+This project (GO Template LSP) aims to tackle that issue. From now on, instantaneous diagnostics and type checking are a breeze.
 
 You will never again need to download a dependency to replace the good old and trusty Go Template package.
 
@@ -17,12 +17,14 @@ Below is an early version of the LSP in action (diagnostics)
 First you will need to compile the project
 
 ```bash
-git clone https://github.com/yayolande/gota
-cd gota
+git clone https://github.com/yayolande/go-template-lsp
+cd go-template-lsp
+
+go get -u
 go build
 ```
 
-Once the executable compiled, you need to follow instructions related to your particular text editor/IDE to use it.
+Once the executable is compiled, you will need to follow instructions related to your particular text editor/IDE to use it.
 In my case, I am a Neovim enjoyer, so here is the code to include in your `init.lua`
 
 ```lua
@@ -31,8 +33,8 @@ local function start_go_template_lsp(capabilities)
 		pattern = "html",
 		callback = function(args)
 			vim.lsp.start({
-				name = "gota-lsp",
-				cmd = { "path_to_gota_executable" },
+				name = "go-tmpl-lsp",
+				cmd = { "path_to_go_template_lsp_executable" },
 				capabilities = capabilities,
 				-- root_dir = vim.fn.getcwd(),
 				root_dir = vim.fs.root(args.buf, { 'go.mod' }),
@@ -50,10 +52,10 @@ cmp.setup({
 
 local capabilities = require('cmp_nvim_lsp').default_capabilities()
 start_go_template_lsp(capabilities)
-
 ```
 
 **NB:** For the example above, the LSP will only be launched whenever an 'html' is opened within a GO project. To change it, look at `pattern` and `root_dir` properties
+
 **NB:** Install procedure for VS code is planed for when the project will reach maturity
 
 ## Usage
