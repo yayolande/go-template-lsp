@@ -12,16 +12,16 @@ import (
 	"go-template-lsp/lsp"
 
 	"github.com/yayolande/gota"
-	"github.com/yayolande/gota/parser"
-	"github.com/yayolande/gota/lexer"
 	checker "github.com/yayolande/gota/analyzer"
+	"github.com/yayolande/gota/lexer"
+	"github.com/yayolande/gota/parser"
 )
 
 type workSpaceStore struct {
-	rawFiles				map[string][]byte
-	parsedFiles			map[string]*parser.GroupStatementNode
-	openFilesAnalyzed	map[string]*checker.FileDefinition
-	openedFilesError	map[string][]lexer.Error
+	rawFiles          map[string][]byte
+	parsedFiles       map[string]*parser.GroupStatementNode
+	openFilesAnalyzed map[string]*checker.FileDefinition
+	openedFilesError  map[string][]lexer.Error
 }
 
 func main() {
@@ -52,7 +52,7 @@ func main() {
 
 	var request lsp.RequestMessage[any]
 	var response []byte
-	var isRequestResponse bool	// Response: true <====> Notification: false
+	var isRequestResponse bool // Response: true <====> Notification: false
 	var fileURI string
 	var fileContent []byte
 
@@ -100,7 +100,7 @@ func main() {
 			// TODO: Not sure what to do
 		case "textDocument/hover":
 			isRequestResponse = true
-			response = lsp.ProcessHoverRequest(data)
+			response = lsp.ProcessHoverRequest(data, storage.openFilesAnalyzed)
 		case "textDocument/definition":
 			isRequestResponse = true
 			response, fileURI, fileContent = lsp.ProcessGoToDefinition(data, storage.openFilesAnalyzed, storage.rawFiles)
@@ -111,8 +111,8 @@ func main() {
 		if isRequestResponse {
 			lsp.SendToLspClient(os.Stdout, response)
 			/*
-			response = lsp.Encode(response)
-			lsp.SendOutput(os.Stdout, response)
+				response = lsp.Encode(response)
+				lsp.SendOutput(os.Stdout, response)
 			*/
 		}
 
@@ -130,8 +130,8 @@ func main() {
 }
 
 // Queue like system that notify concerned goroutine when new 'text document' is received from the client.
-// Not all sent 'text document' are processed in order, or even processed at all. 
-// In other word, if the same document is inserted many time, only the most recent will be processed when 
+// Not all sent 'text document' are processed in order, or even processed at all.
+// In other word, if the same document is inserted many time, only the most recent will be processed when
 // concerned goroutine is ready to do so
 func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
 	if content == nil || uri == "" {
@@ -154,7 +154,7 @@ func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotif
 
 func notifyTheRootPath(rootPathNotication chan string, rootURI string) {
 	if rootPathNotication == nil {
-		panic("unexpected usage of 'rootPathNotication' channel. This channel should be used only once to send root path. " + 
+		panic("unexpected usage of 'rootPathNotication' channel. This channel should be used only once to send root path. " +
 			"Either it hasn't been initialized at least once, or it has been used more than once (bc. channel set to nil after first use)")
 	}
 
@@ -185,10 +185,10 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	var rootPath string
 	var targetExtension string
 
-	rootPath, ok := <- rootPathNotication
+	rootPath, ok := <-rootPathNotication
 	rootPathNotication = nil
 	if !ok {
-		panic("rootPathNotification is closed or nil within 'ProcessDiagnosticNotification()'. " + 
+		panic("rootPathNotification is closed or nil within 'ProcessDiagnosticNotification()'. " +
 			"that channel should only emit the root path once, and then be closed right after and then never used again")
 	}
 
@@ -198,7 +198,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	// targetExtension = ".tmpl"
 	storage.rawFiles = gota.OpenProjectFiles(rootPath, targetExtension)
 
-	// Since the client only recognize URI, it is better to adopt this early 
+	// Since the client only recognize URI, it is better to adopt this early
 	// on the server as well to avoid perpetual conversion from 'uri' to 'path'
 	storage.rawFiles = moveKeysFromFilePathToUri(storage.rawFiles)
 
@@ -213,9 +213,9 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	notification := &lsp.NotificationMessage[lsp.PublishDiagnosticsParams]{
 		JsonRpc: "2.0",
-		Method: "textDocument/publishDiagnostics",
+		Method:  "textDocument/publishDiagnostics",
 		Params: lsp.PublishDiagnosticsParams{
-			Uri: "place_holder_by_lsp_server--should_never_reach_the_client",
+			Uri:         "place_holder_by_lsp_server--should_never_reach_the_client",
 			Diagnostics: []lsp.Diagnostic{},
 		},
 	}
@@ -227,14 +227,13 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	for _ = range textChangedNotification {
 		if len(textFromClient) == 0 {
-			panic("got a change notification but the text from client was empty. " + 
-				"check that the 'textFromClient' still point to the correct address " + 
-				"or that the notification wasn't fired by accident") 
+			panic("got a change notification but the text from client was empty. " +
+				"check that the 'textFromClient' still point to the correct address " +
+				"or that the notification wasn't fired by accident")
 		}
 
 		// TODO: handle the case where file is not in workspaceFolders
 		// the lsp should be still working, but it should not use data for the other workspace
-
 
 		muTextFromClient.Lock()
 
@@ -249,14 +248,18 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			// TODO; this code below will one day cause trouble
 			// In fact, if a file opened by the lsp client is not in the root or haven't the mandatory exntension
 			// then the condition after the loop below will fail and launch a panic
-			// if len(cloneTextFromClient) != 0 
-			if ! isFileInsideWorkspace(uri, rootPath, targetExtension) {
+			// if len(cloneTextFromClient) != 0
+			if !isFileInsideWorkspace(uri, rootPath, targetExtension) {
 				log.Printf("oups ... this file is not considerated part of the project ::: file = %s\n", uri)
 				continue
 			}
 
 			storage.rawFiles[uri] = fileContent
 			parseTree, localErrs := gota.ParseSingleFile(fileContent)
+
+			if parseTree == nil {
+				continue
+			}
 
 			storage.parsedFiles[uri] = parseTree
 			storage.openedFilesError[uri] = localErrs
@@ -306,11 +309,11 @@ func isFileInsideWorkspace(uri string, rootPath string, allowedFileExntesion str
 	path := uri
 	rootPath = filePathToUri(rootPath)
 
-	if ! strings.HasPrefix(path, rootPath) {
+	if !strings.HasPrefix(path, rootPath) {
 		return false
 	}
 
-	if ! strings.HasSuffix(path, allowedFileExntesion) {
+	if !strings.HasSuffix(path, allowedFileExntesion) {
 		return false
 	}
 
@@ -338,7 +341,7 @@ func setParseErrosToDiagnosticsNotification(errs []gota.Error, response *lsp.Not
 
 		diagnostic := lsp.Diagnostic{
 			Message: err.GetError(),
-			Range: *fromParserRangeToLspRange(err.GetRange()),
+			Range:   *fromParserRangeToLspRange(err.GetRange()),
 		}
 
 		response.Params.Diagnostics = append(response.Params.Diagnostics, diagnostic)
@@ -350,11 +353,11 @@ func setParseErrosToDiagnosticsNotification(errs []gota.Error, response *lsp.Not
 func fromParserRangeToLspRange(rg lexer.Range) *lsp.Range {
 	reach := &lsp.Range{
 		Start: lsp.Position{
-			Line: uint(rg.Start.Line),
+			Line:      uint(rg.Start.Line),
 			Character: uint(rg.Start.Character),
 		},
 		End: lsp.Position{
-			Line: uint(rg.End.Line),
+			Line:      uint(rg.End.Line),
 			Character: uint(rg.End.Character),
 		},
 	}
@@ -455,5 +458,3 @@ func configureLogging() {
 	log.SetPrefix(" --> ")
 	log.SetOutput(file)
 }
-
-
