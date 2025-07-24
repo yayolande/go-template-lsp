@@ -1,81 +1,84 @@
 package lsp
 
 import (
-	"bufio"
-	"bytes"
+	// "bufio"
+	// "bytes"
 	"encoding/json"
-	"fmt"
+	// "fmt"
 	"log"
-	"strings"
+	// "strings"
 
 	"github.com/yayolande/gota"
-	"github.com/yayolande/gota/lexer"
 	checker "github.com/yayolande/gota/analyzer"
+	"github.com/yayolande/gota/lexer"
 )
 
 var filesOpenedByEditor = make(map[string]string)
 
 type RequestMessage[T any] struct {
-	JsonRpc	string `json:"jsonrpc"`
-	Id	int	`json:"id"`
-	Method string `json:"method"`
-	Params	T	`json:"params"`
+	JsonRpc string `json:"jsonrpc"`
+	Id      int    `json:"id"`
+	Method  string `json:"method"`
+	Params  T      `json:"params"`
 }
 
-type ResponseMessage [T any] struct {
-	JsonRpc	string `json:"jsonrpc"`
-	Id	int	`json:"id"`
-	Result	T	`json:"result"`
+type ResponseMessage[T any] struct {
+	JsonRpc string `json:"jsonrpc"`
+	Id      int    `json:"id"`
+	Result  T      `json:"result"`
 }
 
-type NotificationMessage [T any] struct {
-	JsonRpc	string `json:"jsonrpc"`
-	Method string `json:"method"`
-	Params	T	`json:"params"`
+type NotificationMessage[T any] struct {
+	JsonRpc string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  T      `json:"params"`
 }
 
 type InitializeParams struct {
-	ProcessId	int	`json:"processId"`
-	Capabilities map[string]interface{}	`json:"capabilities"`
-	ClientInfo	struct {
-		Name	string	`json:"name"`
-		Version	string	`json:"version"`
-	}	`json:"clientInfo"`
-	Locale	string	`json:"locale"`
-	RootUri	string	`json:"rootUri"`
-	Trace	any	`json:"trace"`
-	WorkspaceFolders	any `json:"workspaceFolders"`
-	InitializationOptions	any	`json:"initializationOptions"`
+	ProcessId    int                    `json:"processId"`
+	Capabilities map[string]interface{} `json:"capabilities"`
+	ClientInfo   struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	} `json:"clientInfo"`
+	Locale                string `json:"locale"`
+	RootUri               string `json:"rootUri"`
+	Trace                 any    `json:"trace"`
+	WorkspaceFolders      any    `json:"workspaceFolders"`
+	InitializationOptions any    `json:"initializationOptions"`
 }
 
 type ServerCapabilities struct {
-	TextDocumentSync	int	`json:"textDocumentSync"`
-	HoverProvider	bool	`json:"hoverProvider"`
+	TextDocumentSync   int  `json:"textDocumentSync"`
+	HoverProvider      bool `json:"hoverProvider"`
 	DefinitionProvider bool `json:"definitionProvider"`
 }
 
 type InitializeResult struct {
-	Capabilities ServerCapabilities	`json:"capabilities"`
-	ServerInfo	struct{
-		Name	string	`json:"name"`
-		Version	string	`json:"version"`
-	}	`json:"serverInfo"`
+	Capabilities ServerCapabilities `json:"capabilities"`
+	ServerInfo   struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	} `json:"serverInfo"`
 }
 
 // Notification publish Diagnostics Params
 type PublishDiagnosticsParams struct {
-	Uri	string	`json:"uri"`
-	Diagnostics	[]Diagnostic	`json:"diagnostics"`
+	Uri         string       `json:"uri"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
 }
 
 type Diagnostic struct {
-	Range	Range	`json:"range"`
-	Message	string	`json:"message"`
+	Range   Range  `json:"range"`
+	Message string `json:"message"`
 }
 
-func convertParserRangeToLspRange(parserRange lexer.Range) Range {
-	reach := Range{}
+func convertParserRangeToLspRange(parserRange *lexer.Range) Range {
+	if parserRange == nil {
+		return Range{}
+	}
 
+	reach := Range{}
 	reach.Start.Line = uint(parserRange.Start.Line)
 	reach.Start.Character = uint(parserRange.Start.Character)
 
@@ -85,7 +88,7 @@ func convertParserRangeToLspRange(parserRange lexer.Range) Range {
 	return reach
 }
 
-func ProcessInitializeRequest (data []byte) (response []byte, root string) {
+func ProcessInitializeRequest(data []byte) (response []byte, root string) {
 	req := RequestMessage[InitializeParams]{}
 
 	err := json.Unmarshal(data, &req)
@@ -94,13 +97,13 @@ func ProcessInitializeRequest (data []byte) (response []byte, root string) {
 		panic("error while unmarshalling data during 'initialize' phase, " + err.Error())
 	}
 
-	res := ResponseMessage[InitializeResult] {
+	res := ResponseMessage[InitializeResult]{
 		JsonRpc: "2.0",
-		Id: req.Id,
+		Id:      req.Id,
 		Result: InitializeResult{
 			Capabilities: ServerCapabilities{
-				TextDocumentSync: 1,
-				HoverProvider: true,
+				TextDocumentSync:   1,
+				HoverProvider:      true,
 				DefinitionProvider: true,
 			},
 		},
@@ -128,17 +131,17 @@ func ProcessInitializedNotificatoin(data []byte) {
 }
 
 type TextDocumentItem struct {
-	Uri	string	`json:"uri"`
-	Version	int	`json:"version"`
-	LanguageId	string	`json:"languageId"`
-	Text	string	`json:"text"`
+	Uri        string `json:"uri"`
+	Version    int    `json:"version"`
+	LanguageId string `json:"languageId"`
+	Text       string `json:"text"`
 }
 
 type DidOpenTextDocumentParams struct {
-	TextDocument TextDocumentItem	`json:"textDocument"`
+	TextDocument TextDocumentItem `json:"textDocument"`
 }
 
-func ProcessDidOpenTextDocumentNotification (data []byte) (fileURI string, fileContent []byte) {
+func ProcessDidOpenTextDocumentNotification(data []byte) (fileURI string, fileContent []byte) {
 	request := RequestMessage[DidOpenTextDocumentParams]{}
 
 	err := json.Unmarshal(data, &request)
@@ -157,27 +160,27 @@ func ProcessDidOpenTextDocumentNotification (data []byte) (fileURI string, fileC
 }
 
 type Position struct {
-	Line	uint	`json:"line"`
-	Character uint	`json:"character"`
+	Line      uint `json:"line"`
+	Character uint `json:"character"`
 }
 
 type Range struct {
-	Start	Position	`json:"start"`
-	End	Position	`json:"end"`
+	Start Position `json:"start"`
+	End   Position `json:"end"`
 }
 
 type TextDocumentContentChangeEvent struct {
-	Range Range	`json:"range"`
-	RangeLength	uint	`json:"rangeLength"`
-	Text	string	`json:"text"`
+	Range       Range  `json:"range"`
+	RangeLength uint   `json:"rangeLength"`
+	Text        string `json:"text"`
 }
 
 type DidChangeTextDocumentParams struct {
-	TextDocument	TextDocumentItem	`json:"textDocument"`
-	ContentChanges	[]TextDocumentContentChangeEvent	`json:"contentChanges"`
+	TextDocument   TextDocumentItem                 `json:"textDocument"`
+	ContentChanges []TextDocumentContentChangeEvent `json:"contentChanges"`
 }
 
-func ProcessDidChangeTextDocumentNotification (data []byte) (fileURI string, fileContent []byte) {
+func ProcessDidChangeTextDocumentNotification(data []byte) (fileURI string, fileContent []byte) {
 	var request RequestMessage[DidChangeTextDocumentParams]
 
 	err := json.Unmarshal(data, &request)
@@ -208,10 +211,10 @@ func ProcessDidChangeTextDocumentNotification (data []byte) (fileURI string, fil
 }
 
 type DidCloseTextDocumentParams struct {
-	TextDocument	TextDocumentItem	`json:"textDocument"`
+	TextDocument TextDocumentItem `json:"textDocument"`
 }
 
-func ProcessDidCloseTextDocumentNotification (data []byte) (fileURI string, fileContent []byte) {
+func ProcessDidCloseTextDocumentNotification(data []byte) (fileURI string, fileContent []byte) {
 	var request RequestMessage[DidCloseTextDocumentParams]
 
 	err := json.Unmarshal(data, &request)
@@ -230,14 +233,14 @@ func ProcessDidCloseTextDocumentNotification (data []byte) (fileURI string, file
 }
 
 type MarkupContent struct {
-	Kind	string	`json:"kind"`
-	Value	string	`json:"value"`
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
 }
 
-func ProcessHoverRequest (data []byte) []byte {
+func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefinition) []byte {
 	type HoverParams struct {
-		TextDocument	TextDocumentItem	`json:"textDocument"`
-		Position	Position	`json:"position"`
+		TextDocument TextDocumentItem `json:"textDocument"`
+		Position     Position         `json:"position"`
 	}
 
 	var request RequestMessage[HoverParams]
@@ -249,61 +252,42 @@ func ProcessHoverRequest (data []byte) []byte {
 		return nil
 	}
 
-	documentPath := request.Params.TextDocument.Uri
-	documentContent := filesOpenedByEditor[documentPath]
-	countLine := int(request.Params.Position.Line)
-	countChar := int(request.Params.Position.Character)
-
-	scanner := bufio.NewScanner(strings.NewReader(documentContent))
-	for i := 0; i <= countLine; i++ {
-		scanner.Scan()
+	position := lexer.Position{
+		Line:      int(request.Params.Position.Line),
+		Character: int(request.Params.Position.Character),
 	}
 
-	line := scanner.Text()
-
-	log.Printf("====> line: %+v :::: characterCount: %d", line, countChar)
-
-	var word string
-
-	character := line[countChar]
-	indexCursor := bytes.ContainsAny([]byte{character}, " ,.-<>/\\")
-	word = string(character)
-
-	if ! indexCursor {
-		indexRightSeparator := strings.IndexAny(line[countChar:], " ,.-<>/\\")
-		indexLeftSeparator := strings.LastIndexAny(line[:countChar], " ,.-<>/\\")
-
-		if indexLeftSeparator == -1 {
-			indexLeftSeparator = -1
-		}
-
-		if indexRightSeparator == -1 {
-			indexRightSeparator = len(line)
-		} else {
-			indexRightSeparator += countChar
-		}
-
-		word = line[indexLeftSeparator + 1 : indexRightSeparator]
+	file := openFiles[request.Params.TextDocument.Uri]
+	if file == nil {
+		panic("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
 	}
 
+	// targetFileNameURI, reach, errGoTo := gota.GoToDefinition(file, position)
+
+	typeStringified, reach := gota.Hover(file, position)
 
 	type HoverResult struct {
-		Contents	MarkupContent	`json:"contents"`
-		Range	Range	`json:"range,omitempty"`
+		Contents MarkupContent `json:"contents"`
+		Range    Range         `json:"range,omitempty"`
 	}
-	
-	response := ResponseMessage[HoverResult]{
+
+	response := ResponseMessage[*HoverResult]{
 		JsonRpc: request.JsonRpc,
-		Id: request.Id,
-		Result: HoverResult{
+		Id:      request.Id,
+		Result: &HoverResult{
 			Contents: MarkupContent{
-				Kind: "plaintext",
-				Value: fmt.Sprintf("%s -- LSP", word),
+				// Kind:  "plaintext",
+				Kind:  "markdown",
+				Value: typeStringified,
+				// Value: fmt.Sprintf("%s -- LSP", word),
 				// Value: fmt.Sprintf("%c -- LSP", character),
 			},
-			Range: Range{
-			},
+			Range: convertParserRangeToLspRange(reach),
 		},
+	}
+
+	if typeStringified == "" {
+		response.Result = nil
 	}
 
 	responseText, err := json.Marshal(response)
@@ -317,17 +301,17 @@ func ProcessHoverRequest (data []byte) []byte {
 }
 
 type TextDocumentIdentifier struct {
-	Uri	string	`json:"uri"`
+	Uri string `json:"uri"`
 }
 
 type TextDocumentPositionParams struct {
-	TextDocument	TextDocumentIdentifier `json:"textDocument"`
-	Position			Position `json:"position"`
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
 }
 
 type Location struct {
-	Uri	string `json:"uri"`
-	Range	Range	`json:"range"`
+	Uri   string `json:"uri"`
+	Range Range  `json:"range"`
 }
 
 // TODO: this implementation work so well that it should be propagated to the other 'Params'
@@ -339,7 +323,7 @@ type DefinitionResults struct {
 	Location
 }
 
-func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefinition, rawFiles map[string][]byte) (response []byte, fileName string, fileContent []byte) {
+func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefinition, rawFiles map[string][]byte) (response []byte, fileName string) {
 	if len(openFiles) == 0 {
 		panic("cannot compute the source of 'go-to-definition' because no files have been opened on the server")
 	}
@@ -349,56 +333,54 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 	err := json.Unmarshal(data, &req)
 	if err != nil {
 		log.Println("error while decoding/unmarshalling lsp client data, ", err.Error())
-		return nil, "", nil
+		return nil, ""
 	}
 
 	position := lexer.Position{
-		Line: int(req.Params.Position.Line),
+		Line:      int(req.Params.Position.Line),
 		Character: int(req.Params.Position.Character),
 	}
 
-	file := openFiles[req.Params.TextDocument.Uri]
-	if file == nil {
-		panic("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
+	currentFile := openFiles[req.Params.TextDocument.Uri]
+	if currentFile == nil {
+		panic("currentFile requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
 	}
 
-	fileNameURI, reach := gota.GoToDefinition(file, position)
+	fileNames, reaches, errGoTo := gota.GoToDefinition(currentFile, position)
 
 	var res ResponseMessage[[]DefinitionResults]
-
 	res.Id = req.Id
 	res.JsonRpc = req.JsonRpc
 
-	result := DefinitionResults{}
-	result.Uri = fileNameURI
-	result.Range = convertParserRangeToLspRange(reach)
+	for index := range len(fileNames) {
+		fileName = fileNames[index]
+		targetFileNameURI := fileNames[index]
+		reach := reaches[index]
 
-	res.Result = append(res.Result, result)
-	if fileNameURI == "" {
+		if targetFileNameURI == "" {
+			log.Printf("found a symbol definition without a valid fileName during 'go-to-definition'"+
+				"\n\n current file name = %s :: file def = %#v\n", currentFile.FileName(), currentFile)
+			panic("found a symbol definition without a valid fileName during 'go-to-definition'")
+		}
+
+		result := DefinitionResults{}
+		result.Uri = targetFileNameURI
+		result.Range = convertParserRangeToLspRange(&reach)
+
+		res.Result = append(res.Result, result)
+	}
+
+	if errGoTo != nil {
 		res.Result = nil
 	}
 
 	data, err = json.Marshal(res)
 	if err != nil {
 		log.Println("error while encoding/marshalling data for lsp client, ", err.Error())
-		return nil, fileNameURI, nil
+		return nil, fileName
 	}
 
 	log.Printf("definition found : %#v\n", res)
 
-	_, found := openFiles[fileNameURI]
-
-	if ! found {
-		fileName = fileNameURI
-		fileContent, found = rawFiles[fileNameURI]
-
-		if ! found {
-			panic("LSP server wasn't able to find in-memory content for file " + fileNameURI + 
-				". all projects files should be present in-memory for accurate computation")
-		}
-	}
-
-
-	return data, fileName, fileContent
+	return data, fileName
 }
-

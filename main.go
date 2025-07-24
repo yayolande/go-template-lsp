@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -20,8 +21,10 @@ import (
 type workSpaceStore struct {
 	rawFiles          map[string][]byte
 	parsedFiles       map[string]*parser.GroupStatementNode
-	openFilesAnalyzed map[string]*checker.FileDefinition
-	openedFilesError  map[string][]lexer.Error
+	ErrorsParsedFiles map[string][]lexer.Error
+
+	openedFilesAnalyzed map[string]*checker.FileDefinition
+	ErrorsAnalyzedFiles map[string][]lexer.Error
 }
 
 func main() {
@@ -100,12 +103,12 @@ func main() {
 			// TODO: Not sure what to do
 		case "textDocument/hover":
 			isRequestResponse = true
-			response = lsp.ProcessHoverRequest(data, storage.openFilesAnalyzed)
+			response = lsp.ProcessHoverRequest(data, storage.openedFilesAnalyzed)
 		case "textDocument/definition":
 			isRequestResponse = true
-			response, fileURI, fileContent = lsp.ProcessGoToDefinition(data, storage.openFilesAnalyzed, storage.rawFiles)
+			response, _ = lsp.ProcessGoToDefinition(data, storage.openedFilesAnalyzed, storage.rawFiles)
 
-			insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
+			// insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		}
 
 		if isRequestResponse {
@@ -194,22 +197,30 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	rootPath = uriToFilePath(rootPath)
 	targetExtension = ".html"
+
 	// TODO: When I use the value below, I get nasty error (panic). Investigate it later on
 	// targetExtension = ".tmpl"
 	storage.rawFiles = gota.OpenProjectFiles(rootPath, targetExtension)
 
 	// Since the client only recognize URI, it is better to adopt this early
 	// on the server as well to avoid perpetual conversion from 'uri' to 'path'
-	storage.rawFiles = moveKeysFromFilePathToUri(storage.rawFiles)
+	storage.rawFiles = convertKeysFromFilePathToUri(storage.rawFiles)
 
-	// TODO: should I check: len(rawFiles) == len(storage.parsedFiles)
-	storage.parsedFiles, _ = gota.ParseFilesInWorkspace(storage.rawFiles)
-	if storage.parsedFiles == nil {
-		storage.parsedFiles = make(map[string]*parser.GroupStatementNode)
+	muTextFromClient.Lock()
+
+	maps.Copy(textFromClient, storage.rawFiles)
+
+	if len(textChangedNotification) == 0 { // Trigger analysis
+		textChangedNotification <- true
 	}
 
-	// TODO: For improved perf. also fetch gota.getWorkspaceTemplateDefinition()
-	// and only recompute it when a specific file change
+	muTextFromClient.Unlock()
+
+	storage.parsedFiles = make(map[string]*parser.GroupStatementNode)
+	storage.openedFilesAnalyzed = make(map[string]*checker.FileDefinition)
+
+	storage.ErrorsAnalyzedFiles = make(map[string][]lexer.Error)
+	storage.ErrorsParsedFiles = make(map[string][]lexer.Error)
 
 	notification := &lsp.NotificationMessage[lsp.PublishDiagnosticsParams]{
 		JsonRpc: "2.0",
@@ -221,8 +232,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	}
 
 	// watch for client edit notification (didChange, ...)
-	storage.openFilesAnalyzed = make(map[string]*checker.FileDefinition)
-	storage.openedFilesError = make(map[string][]gota.Error)
+	var chainedFiles []gota.FileAnalysisAndError = nil
 	cloneTextFromClient := make(map[string][]byte)
 
 	for _ = range textChangedNotification {
@@ -239,16 +249,15 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 		for uri, fileContent := range textFromClient {
 			cloneTextFromClient[uri] = fileContent
-			delete(textFromClient, uri)
 		}
+
+		clear(textFromClient)
 
 		muTextFromClient.Unlock()
 
+		namesOfFileChanged := make([]string, 0, len(cloneTextFromClient))
+
 		for uri, fileContent := range cloneTextFromClient {
-			// TODO; this code below will one day cause trouble
-			// In fact, if a file opened by the lsp client is not in the root or haven't the mandatory exntension
-			// then the condition after the loop below will fail and launch a panic
-			// if len(cloneTextFromClient) != 0
 			if !isFileInsideWorkspace(uri, rootPath, targetExtension) {
 				log.Printf("oups ... this file is not considerated part of the project ::: file = %s\n", uri)
 				continue
@@ -262,30 +271,46 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			}
 
 			storage.parsedFiles[uri] = parseTree
-			storage.openedFilesError[uri] = localErrs
+			storage.ErrorsParsedFiles[uri] = localErrs
 
-			// delete(cloneTextFromClient, uri)
+			namesOfFileChanged = append(namesOfFileChanged, uri)
 		}
 
-		for uri, _ := range storage.openedFilesError {
-			file, localErrs := gota.DefinitionAnalysisSingleFile(uri, storage.parsedFiles)
+		chainedFiles = nil
 
-			storage.openFilesAnalyzed[uri] = file
-			storage.openedFilesError[uri] = append(storage.openedFilesError[uri], localErrs...)
+		if len(cloneTextFromClient) == len(storage.parsedFiles) {
+			chainedFiles = gota.DefinitionAnalisisWithinWorkspace(storage.parsedFiles)
+
+		} else if len(cloneTextFromClient) > 0 {
+			chainedFiles = gota.DefinitionAnalysisChainTrigerredByBatchFileChange(storage.parsedFiles, namesOfFileChanged...)
+
+			// } else if len(cloneTextFromClient) == 1 {
+			// chainedFiles = gota.DefinitionAnalysisChainTrigerredBysingleFileChange(namesOfFileChanged[0], storage.parsedFiles)
 		}
 
-		var errs []gota.Error
-		for uri, _ := range cloneTextFromClient {
-			// file, localErrs := gota.DefinitionAnalysisSingleFile(uri, storage.parsedFiles)
+		namesOfFileChanged = namesOfFileChanged[:0] // empty the slice
 
-			// storage.openFilesAnalyzed[uri] = file
+		// for uri, _ := range cloneTextFromClient {
+		//chainedFiles := gota.DefinitionAnalysisChainTrigerredBysingleFileChange(uri, storage.parsedFiles)
 
-			// storage.openedFilesError[uri] = append(storage.openedFilesError[uri], localErrs...)
-			errs = storage.openedFilesError[uri]
+		log.Println("\n===== list of affected files =====\n")
+
+		for _, fileAnalyzed := range chainedFiles {
+			localUri := fileAnalyzed.FileName
+
+			log.Printf("<----> fileName affected = %s\n", localUri)
+
+			storage.openedFilesAnalyzed[localUri] = fileAnalyzed.File
+			storage.ErrorsAnalyzedFiles[localUri] = fileAnalyzed.Errs
+
+			errs := make([]gota.Error, 0, len(storage.ErrorsParsedFiles[localUri])+len(storage.ErrorsAnalyzedFiles[localUri]))
+
+			errs = append(errs, storage.ErrorsParsedFiles[localUri]...)
+			errs = append(errs, storage.ErrorsAnalyzedFiles[localUri]...)
 
 			notification = clearPushDiagnosticNotification(notification)
 			notification = setParseErrosToDiagnosticsNotification(errs, notification)
-			notification.Params.Uri = uri
+			notification.Params.Uri = localUri
 
 			response, err := json.Marshal(notification)
 			if err != nil {
@@ -294,14 +319,12 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			}
 
 			lsp.SendToLspClient(os.Stdout, response)
-			// log.Printf("sent diagnostic notification: \n %q", response)
-			// log.Printf("\n\n simpler notif: \n %#v \n", notification)
+
 			log.Printf("\n\nmessage sent to client :: msg = %#v\n\n", notification)
 		}
+		// }
 
 		clear(cloneTextFromClient)
-
-		// clear(textFromClient)
 	}
 }
 
@@ -431,7 +454,7 @@ func filePathToUri(path string) string {
 	return u.String()
 }
 
-func moveKeysFromFilePathToUri(files map[string][]byte) map[string][]byte {
+func convertKeysFromFilePathToUri(files map[string][]byte) map[string][]byte {
 	if len(files) == 0 {
 		return files
 	}
