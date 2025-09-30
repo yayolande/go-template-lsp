@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"net/url"
 
-	"go-template-lsp/lsp"
+	"github.com/yayolande/go-template-lsp/lsp"
 
 	"github.com/yayolande/gota"
 	checker "github.com/yayolande/gota/analyzer"
