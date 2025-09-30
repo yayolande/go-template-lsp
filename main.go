@@ -29,11 +29,6 @@ type workSpaceStore struct {
 
 func main() {
 
-	// str := "Content-Length: 865\r\n\r\n" + `{"method":"initialize","jsonrpc":"2.0","id":1,"params":{"workspaceFolders":null,"capabilities":{"textDocument":{"completion":{"dynamicRegistration":false,"completionList":{"itemDefaults":["commitCharacters","editRange","insertTextFormat","insertTextMode","data"]},"contextSupport":true,"completionItem":{"snippetSupport":true,"labelDetailsSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail","additionalTextEdits","sortText","filterText","insertText","textEdit","insertTextFormat","insertTextMode"]},"insertReplaceSupport":true,"tagSupport":{"valueSet":[1]},"preselectSupport":true,"deprecatedSupport":true,"commitCharactersSupport":true},"insertTextMode":1}}},"rootUri":null,"rootPath":null,"clientInfo":{"version":"0.10.1+v0.10.1","name":"Neovim"},"processId":230750,"workDoneToken":"1","trace":"off"}}`
-
-	// scanner := bufio.NewScanner(strings.NewReader(str))
-	// scanner := bufio.NewScanner(os.Stdin)
-	// scanner.Split(inputParsingSplitFunc)
 	configureLogging()
 
 	// scanner := lsp.Decode(strings.NewReader(str))
@@ -56,6 +51,7 @@ func main() {
 	var request lsp.RequestMessage[any]
 	var response []byte
 	var isRequestResponse bool // Response: true <====> Notification: false
+	var isExiting bool = false
 	var fileURI string
 	var fileContent []byte
 
@@ -71,9 +67,17 @@ func main() {
 		// TODO: All over the code base, replace 'json' module by a custom made 'stringer' tool
 		// because it is more performat
 		json.Unmarshal(data, &request)
-		// log.Printf("Received json struct: %q\n", data)
 
-		log.Printf("Received json struct: %+v\n", request)
+		if isExiting {
+			if request.Method == "exit" {
+				break
+			} else {
+				response = lsp.ProcessIllegalRequestAfterShutdown(request.JsonRpc, request.Id)
+				lsp.SendToLspClient(os.Stdout, response)
+			}
+
+			continue
+		}
 
 		// TODO: behavior of the 'method' do not respect the LSP spec. For instance 'initialize' must only happen once
 		// However there is nothing stoping a rogue program to 'initialize' more than once, or even to not 'initialize' at all
@@ -89,6 +93,12 @@ func main() {
 		case "initialized":
 			isRequestResponse = false
 			lsp.ProcessInitializedNotificatoin(data)
+		case "shutdown":
+			// TODO: close opened buffers and stop task analysis
+			isExiting = true
+			isRequestResponse = true
+			response = lsp.ProcessShutdownRequest(request.JsonRpc, request.Id)
+
 		case "textDocument/didOpen":
 			isRequestResponse = false
 			fileURI, fileContent = lsp.ProcessDidOpenTextDocumentNotification(data)
@@ -113,23 +123,17 @@ func main() {
 
 		if isRequestResponse {
 			lsp.SendToLspClient(os.Stdout, response)
-			/*
-				response = lsp.Encode(response)
-				lsp.SendOutput(os.Stdout, response)
-			*/
 		}
-
-		// log.Printf("Sent json struct: %+v", string(response))
 
 		response = nil
 		isRequestResponse = false
 	}
 
 	if scanner.Err() != nil {
-		log.Printf("error: ", scanner.Err().Error())
+		log.Printf("error while closing LSP: ", scanner.Err().Error())
 	}
 
-	log.Printf("\n Shutting down custom lsp server")
+	log.Printf("\n Shutting down Go Template LSP server")
 }
 
 // Queue like system that notify concerned goroutine when new 'text document' is received from the client.
@@ -236,6 +240,9 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	cloneTextFromClient := make(map[string][]byte)
 
 	for _ = range textChangedNotification {
+		log.Printf("==> lsp before compute:\n size all files opened = %d\n size 'textFromClient' = %d\n", len(storage.openedFilesAnalyzed), len(textFromClient))
+		log.Printf("==> lsp before 1:\n size errors all files opened = %d\n size 'textFromClient' = %d\n", len(storage.ErrorsAnalyzedFiles), len(textFromClient))
+
 		if len(textFromClient) == 0 {
 			panic("got a change notification but the text from client was empty. " +
 				"check that the 'textFromClient' still point to the correct address " +
@@ -267,6 +274,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			parseTree, localErrs := gota.ParseSingleFile(fileContent)
 
 			if parseTree == nil {
+				log.Printf("oups ... found an empty parseTree(file)\n fileName = `%s`\n fileContent = `%s`\n", uri, fileContent)
 				continue
 			}
 
@@ -302,15 +310,17 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 			storage.openedFilesAnalyzed[localUri] = fileAnalyzed.File
 			storage.ErrorsAnalyzedFiles[localUri] = fileAnalyzed.Errs
+		}
 
-			errs := make([]gota.Error, 0, len(storage.ErrorsParsedFiles[localUri])+len(storage.ErrorsAnalyzedFiles[localUri]))
+		for uri := range storage.openedFilesAnalyzed {
+			errs := make([]gota.Error, 0, len(storage.ErrorsParsedFiles[uri])+len(storage.ErrorsAnalyzedFiles[uri]))
 
-			errs = append(errs, storage.ErrorsParsedFiles[localUri]...)
-			errs = append(errs, storage.ErrorsAnalyzedFiles[localUri]...)
+			errs = append(errs, storage.ErrorsParsedFiles[uri]...)
+			errs = append(errs, storage.ErrorsAnalyzedFiles[uri]...)
 
 			notification = clearPushDiagnosticNotification(notification)
 			notification = setParseErrosToDiagnosticsNotification(errs, notification)
-			notification.Params.Uri = localUri
+			notification.Params.Uri = uri
 
 			response, err := json.Marshal(notification)
 			if err != nil {
@@ -320,11 +330,25 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 			lsp.SendToLspClient(os.Stdout, response)
 
-			log.Printf("\n\nmessage sent to client :: msg = %#v\n\n", notification)
+			// log.Printf("\n\nmessage sent to client :: msg = %#v\n\n", notification)
 		}
 		// }
 
 		clear(cloneTextFromClient)
+
+		if len(storage.openedFilesAnalyzed) != len(storage.parsedFiles) {
+			log.Printf("size mismatch between 'semantic analysed files' and 'parsed files'\n size analysed files = %d\n size parsed files = %d\n", len(storage.openedFilesAnalyzed), len(storage.parsedFiles))
+			panic("size mismatch between 'semantic analysed files' and 'parsed files'")
+		} else if len(storage.openedFilesAnalyzed) != len(storage.rawFiles) {
+			log.Printf("size mismatch between 'semantic analysed files' and 'raw files'\n size analysed files = %d\n size raw files = %d\n", len(storage.openedFilesAnalyzed), len(storage.rawFiles))
+			panic("size mismatch between 'semantic analysed files' and 'raw files'")
+		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.ErrorsParsedFiles) {
+			log.Printf("size mismatch between 'errors semantic analysed files' and 'errors parsed files'\n size analysed files = %d\n size raw files = %d\n", len(storage.ErrorsAnalyzedFiles), len(storage.ErrorsParsedFiles))
+			panic("size mismatch between 'errors semantic analysed files' and 'errors parsed files'")
+		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.openedFilesAnalyzed) {
+			log.Printf("size mismatch between errors associated to files and opened files", len(storage.ErrorsAnalyzedFiles), len(storage.openedFilesAnalyzed))
+			panic("size mismatch between errors associated to files and opened files")
+		}
 	}
 }
 

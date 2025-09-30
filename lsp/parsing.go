@@ -5,12 +5,12 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"strconv"
 	"log"
+	"strconv"
 )
 
 // func Decode (in *os.File) *bufio.Scanner {
-func ReceiveInput (input io.Reader) *bufio.Scanner {
+func ReceiveInput(input io.Reader) *bufio.Scanner {
 	scanner := bufio.NewScanner(input)
 	scanner.Split(decode)
 
@@ -19,21 +19,21 @@ func ReceiveInput (input io.Reader) *bufio.Scanner {
 
 // For most case, 'SendToLspClient()' is prefered since it automatically encode the response.
 // Send response data over output. The respose data must be 'enconded' first
-func SendOutput (output io.Writer, response []byte) {
+func SendOutput(output io.Writer, response []byte) {
 	_, err := output.Write(response)
 	if err != nil {
-		log.Printf("Error while writing file to 'stdout': ", err.Error())
+		log.Printf("Error while writing file to 'stdout': %s", err.Error())
 	}
 }
 
-// Send 'response' to LSP client over the wire ('output'). 
+// Send 'response' to LSP client over the wire ('output').
 // Encoding is done within this function, so it is not advised to do another encoding
 func SendToLspClient(output io.Writer, response []byte) {
 	response = Encode(response)
 	SendOutput(output, response)
 }
 
-func Encode (dataContent []byte) []byte {
+func Encode(dataContent []byte) []byte {
 	length := strconv.Itoa(len(dataContent))
 	dataHeader := []byte("Content-Length: " + length + "\r\n\r\n")
 	data := append(dataHeader, dataContent...)
@@ -42,9 +42,9 @@ func Encode (dataContent []byte) []byte {
 }
 
 // func inputParsingSplitFunc (data []byte, atEOF bool) (advance int, token []byte, err error) {
-func decode (data []byte, atEOF bool) (advance int, token []byte, err error) {
+func decode(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	indexStartData := bytes.Index(data, []byte("\r\n\r\n"))
-	if indexStartData == - 1 {
+	if indexStartData == -1 {
 		return 0, nil, nil
 	}
 
@@ -67,7 +67,7 @@ func decode (data []byte, atEOF bool) (advance int, token []byte, err error) {
 func getHeaderContentLengthSplitFunc(data []byte) (int, error) {
 	indexHeader := bytes.LastIndex(data, []byte("Content-Length"))
 	if indexHeader == -1 {
-		return -1, errors.New("Unable to find the 'content-length' for this input ! Input parsing aborted" )
+		return -1, errors.New("Unable to find the 'content-length' for this input ! Input parsing aborted")
 	}
 
 	indexLineSeparator := bytes.Index(data[indexHeader:], []byte("\r\n"))
@@ -84,7 +84,7 @@ func getHeaderContentLengthSplitFunc(data []byte) (int, error) {
 
 	indexKeyValueSeparator += indexHeader
 
-	contentLengthString := data[indexKeyValueSeparator + 1 : indexLineSeparator]
+	contentLengthString := data[indexKeyValueSeparator+1 : indexLineSeparator]
 	contentLengthString = bytes.TrimSpace(contentLengthString)
 
 	contentLength, err := strconv.Atoi(string(contentLengthString))

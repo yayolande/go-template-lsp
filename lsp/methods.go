@@ -23,9 +23,15 @@ type RequestMessage[T any] struct {
 }
 
 type ResponseMessage[T any] struct {
-	JsonRpc string `json:"jsonrpc"`
-	Id      int    `json:"id"`
-	Result  T      `json:"result"`
+	JsonRpc string         `json:"jsonrpc"`
+	Id      int            `json:"id"`
+	Result  T              `json:"result"`
+	Error   *ResponseError `json:"error"`
+}
+
+type ResponseError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 type NotificationMessage[T any] struct {
@@ -130,6 +136,46 @@ func ProcessInitializedNotificatoin(data []byte) {
 	log.Println("Succesfully received 'initialized' notification")
 }
 
+func ProcessShutdownRequest(jsonVersion string, requestId int) []byte {
+	// type ShutdownResult struct{}
+
+	// response := ResponseMessage[*ShutdownResult]{
+	response := ResponseMessage[any]{
+		JsonRpc: jsonVersion,
+		Id:      requestId,
+		Result:  nil,
+		Error:   nil,
+	}
+
+	responseText, err := json.Marshal(response)
+	if err != nil {
+		log.Println("Error while marshalling ProcessShutdownRequest: ", err.Error())
+		panic("Error while marshalling ProcessShutdownRequest: " + err.Error())
+	}
+
+	return responseText
+}
+
+func ProcessIllegalRequestAfterShutdown(jsonVersion string, requestId int) []byte {
+	response := ResponseMessage[any]{
+		JsonRpc: jsonVersion,
+		Id:      requestId,
+		Result:  nil,
+		Error: &ResponseError{
+			Code:    -32600,
+			Message: "illegal request while server shutting down",
+		},
+	}
+
+	responseText, err := json.Marshal(response)
+	if err != nil {
+		log.Println("Error while marshalling ProcessIllegalRequestAfterShutdown(): ", err.Error())
+		panic("Error while marshalling ProcessIllegalRequestAfterShutdown(): " + err.Error())
+	}
+
+	return responseText
+}
+
 type TextDocumentItem struct {
 	Uri        string `json:"uri"`
 	Version    int    `json:"version"`
@@ -154,7 +200,7 @@ func ProcessDidOpenTextDocumentNotification(data []byte) (fileURI string, fileCo
 	documentContent := request.Params.TextDocument.Text
 	filesOpenedByEditor[documentURI] = documentContent
 
-	log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
+	// log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
 
 	return documentURI, []byte(documentContent)
 }
@@ -205,7 +251,7 @@ func ProcessDidChangeTextDocumentNotification(data []byte) (fileURI string, file
 	documentURI := request.Params.TextDocument.Uri
 	filesOpenedByEditor[documentURI] = documentContent
 
-	log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
+	// log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
 
 	return documentURI, []byte(documentContent)
 }
@@ -227,7 +273,7 @@ func ProcessDidCloseTextDocumentNotification(data []byte) (fileURI string, fileC
 	documentContent := request.Params.TextDocument.Text
 	delete(filesOpenedByEditor, documentPath)
 
-	log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
+	// log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
 
 	return documentPath, []byte(documentContent)
 }
