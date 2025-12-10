@@ -27,8 +27,10 @@ type workSpaceStore struct {
 	ErrorsAnalyzedFiles map[string][]lexer.Error
 }
 
-func main() {
+var SERVER_NAME string = "Go Template LSP"
+var SERVER_VERSION string = "0.3.1"
 
+func main() {
 	configureLogging()
 
 	// scanner := lsp.Decode(strings.NewReader(str))
@@ -84,7 +86,7 @@ func main() {
 		switch request.Method {
 		case "initialize":
 			var rootURI string
-			response, rootURI = lsp.ProcessInitializeRequest(data)
+			response, rootURI = lsp.ProcessInitializeRequest(data, SERVER_NAME, SERVER_VERSION)
 
 			notifyTheRootPath(rootPathNotication, rootURI)
 			rootPathNotication = nil
@@ -141,7 +143,7 @@ func main() {
 // In other word, if the same document is inserted many time, only the most recent will be processed when
 // concerned goroutine is ready to do so
 func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
-	if content == nil || uri == "" {
+	if len(content) == 0 || uri == "" {
 		return
 	}
 
@@ -240,9 +242,6 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	cloneTextFromClient := make(map[string][]byte)
 
 	for _ = range textChangedNotification {
-		log.Printf("==> lsp before compute:\n size all files opened = %d\n size 'textFromClient' = %d\n", len(storage.openedFilesAnalyzed), len(textFromClient))
-		log.Printf("==> lsp before 1:\n size errors all files opened = %d\n size 'textFromClient' = %d\n", len(storage.ErrorsAnalyzedFiles), len(textFromClient))
-
 		if len(textFromClient) == 0 {
 			panic("got a change notification but the text from client was empty. " +
 				"check that the 'textFromClient' still point to the correct address " +
@@ -285,6 +284,11 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		}
 
 		chainedFiles = nil
+
+		// BUG: this is so ugly
+		// Semantical analysis of files is tighly coupled with this function
+		// I wanted to experiment only with the 'parsing' package,
+		// but it is too challenging to remove or comment out the analysis section
 
 		if len(cloneTextFromClient) == len(storage.parsedFiles) {
 			chainedFiles = gota.DefinitionAnalisisWithinWorkspace(storage.parsedFiles)
@@ -339,9 +343,9 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		if len(storage.openedFilesAnalyzed) != len(storage.parsedFiles) {
 			log.Printf("size mismatch between 'semantic analysed files' and 'parsed files'\n size analysed files = %d\n size parsed files = %d\n", len(storage.openedFilesAnalyzed), len(storage.parsedFiles))
 			panic("size mismatch between 'semantic analysed files' and 'parsed files'")
-		} else if len(storage.openedFilesAnalyzed) != len(storage.rawFiles) {
-			log.Printf("size mismatch between 'semantic analysed files' and 'raw files'\n size analysed files = %d\n size raw files = %d\n", len(storage.openedFilesAnalyzed), len(storage.rawFiles))
-			panic("size mismatch between 'semantic analysed files' and 'raw files'")
+		} else if len(storage.openedFilesAnalyzed) > len(storage.rawFiles) {
+			log.Printf("found more 'semantic analysed files' than 'raw files'\n size analysed files = %d\n size raw files = %d\n", len(storage.openedFilesAnalyzed), len(storage.rawFiles))
+			panic("found more 'semantic analysed files' than 'raw files'")
 		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.ErrorsParsedFiles) {
 			log.Printf("size mismatch between 'errors semantic analysed files' and 'errors parsed files'\n size analysed files = %d\n size raw files = %d\n", len(storage.ErrorsAnalyzedFiles), len(storage.ErrorsParsedFiles))
 			panic("size mismatch between 'errors semantic analysed files' and 'errors parsed files'")

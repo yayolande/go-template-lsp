@@ -4,8 +4,9 @@ import (
 	// "bufio"
 	// "bytes"
 	"encoding/json"
-	// "fmt"
+	"fmt"
 	"log"
+	"strconv"
 	// "strings"
 
 	"github.com/yayolande/gota"
@@ -15,16 +16,38 @@ import (
 
 var filesOpenedByEditor = make(map[string]string)
 
+type ID int
+
+func (id *ID) UnmarshalJSON(data []byte) error {
+	length := len(data)
+	if data[0] == '"' && data[length-1] == '"' {
+		data = data[1 : length-1]
+	}
+
+	number, err := strconv.Atoi(string(data))
+	if err != nil {
+		return fmt.Errorf("'ID' expected either a string or an integer only")
+	}
+
+	*id = ID(number)
+	return nil
+}
+
+func (id *ID) MarshalJSON() ([]byte, error) {
+	val := strconv.Itoa(int(*id))
+	return []byte(val), nil
+}
+
 type RequestMessage[T any] struct {
 	JsonRpc string `json:"jsonrpc"`
-	Id      int    `json:"id"`
+	Id      ID     `json:"id"`
 	Method  string `json:"method"`
 	Params  T      `json:"params"`
 }
 
 type ResponseMessage[T any] struct {
 	JsonRpc string         `json:"jsonrpc"`
-	Id      int            `json:"id"`
+	Id      ID             `json:"id"`
 	Result  T              `json:"result"`
 	Error   *ResponseError `json:"error"`
 }
@@ -94,7 +117,7 @@ func convertParserRangeToLspRange(parserRange *lexer.Range) Range {
 	return reach
 }
 
-func ProcessInitializeRequest(data []byte) (response []byte, root string) {
+func ProcessInitializeRequest(data []byte, lspName string, lspVersion string) (response []byte, root string) {
 	req := RequestMessage[InitializeParams]{}
 
 	err := json.Unmarshal(data, &req)
@@ -115,8 +138,8 @@ func ProcessInitializeRequest(data []byte) (response []byte, root string) {
 		},
 	}
 
-	res.Result.ServerInfo.Name = "steveen_server"
-	res.Result.ServerInfo.Version = "0.1.0"
+	res.Result.ServerInfo.Name = lspName
+	res.Result.ServerInfo.Version = lspVersion
 
 	response, err = json.Marshal(res)
 	if err != nil {
@@ -136,10 +159,7 @@ func ProcessInitializedNotificatoin(data []byte) {
 	log.Println("Succesfully received 'initialized' notification")
 }
 
-func ProcessShutdownRequest(jsonVersion string, requestId int) []byte {
-	// type ShutdownResult struct{}
-
-	// response := ResponseMessage[*ShutdownResult]{
+func ProcessShutdownRequest(jsonVersion string, requestId ID) []byte {
 	response := ResponseMessage[any]{
 		JsonRpc: jsonVersion,
 		Id:      requestId,
@@ -156,7 +176,7 @@ func ProcessShutdownRequest(jsonVersion string, requestId int) []byte {
 	return responseText
 }
 
-func ProcessIllegalRequestAfterShutdown(jsonVersion string, requestId int) []byte {
+func ProcessIllegalRequestAfterShutdown(jsonVersion string, requestId ID) []byte {
 	response := ResponseMessage[any]{
 		JsonRpc: jsonVersion,
 		Id:      requestId,
@@ -199,8 +219,6 @@ func ProcessDidOpenTextDocumentNotification(data []byte) (fileURI string, fileCo
 	documentURI := request.Params.TextDocument.Uri
 	documentContent := request.Params.TextDocument.Text
 	filesOpenedByEditor[documentURI] = documentContent
-
-	// log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
 
 	return documentURI, []byte(documentContent)
 }
@@ -251,8 +269,6 @@ func ProcessDidChangeTextDocumentNotification(data []byte) (fileURI string, file
 	documentURI := request.Params.TextDocument.Uri
 	filesOpenedByEditor[documentURI] = documentContent
 
-	// log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
-
 	return documentURI, []byte(documentContent)
 }
 
@@ -272,8 +288,6 @@ func ProcessDidCloseTextDocumentNotification(data []byte) (fileURI string, fileC
 	documentPath := request.Params.TextDocument.Uri
 	documentContent := request.Params.TextDocument.Text
 	delete(filesOpenedByEditor, documentPath)
-
-	// log.Printf("\n ======= filesOpenedByEditor: %+v \n ======= \n", filesOpenedByEditor)
 
 	return documentPath, []byte(documentContent)
 }
@@ -426,7 +440,6 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 		return nil, fileName
 	}
 
-	log.Printf("definition found : %#v\n", res)
-
 	return data, fileName
 }
+
