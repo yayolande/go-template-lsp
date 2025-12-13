@@ -9,6 +9,8 @@ import (
 
 	"encoding/json"
 	"net/url"
+	"path/filepath"
+	"runtime"
 
 	"github.com/yayolande/go-template-lsp/lsp"
 
@@ -449,7 +451,16 @@ func uriToFilePath(uri string) string {
 		panic("path to a file cannot be empty (conversion from uri to path)")
 	}
 
-	return u.Path
+	path := u.Path
+	if runtime.GOOS == "windows" {
+		if path[0] == '/' && len(path) >= 3 && path[2] == ':' {
+			path = path[1:]
+		}
+	}
+
+	path = filepath.FromSlash(path)
+
+	return path
 }
 
 // TODO: make this function work for windows path as well
@@ -460,24 +471,21 @@ func filePathToUri(path string) string {
 		panic("path to a file cannot be empty")
 	}
 
-	u, err := url.Parse(path)
+	absPath, err := filepath.Abs(path)
 	if err != nil {
-		panic("unable to convert from os path to URI, " + err.Error())
+		panic("malformated file path")
 	}
 
-	if u.Scheme != "" {
-		panic("expected empty scheme for the file's 'URI' but found something. uri = ," + path)
+	slashPath := filepath.ToSlash(absPath)
+
+	if runtime.GOOS == "windows" && slashPath[0] != '/' {
+		slashPath = "/" + slashPath
 	}
 
-	if u.RawQuery != "" {
-		panic("'?' character is not permited within a file's 'URI'. uri = " + path)
+	u := url.URL{
+		Scheme: "file",
+		Path:   slashPath,
 	}
-
-	if u.Fragment != "" {
-		panic("'#' character is not permited within a file's 'URI'. uri = " + path)
-	}
-
-	u.Scheme = "file"
 
 	return u.String()
 }
