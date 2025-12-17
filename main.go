@@ -30,7 +30,7 @@ type workSpaceStore struct {
 }
 
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.1"
+var SERVER_VERSION string = "0.3.2"
 
 func main() {
 	configureLogging()
@@ -123,6 +123,9 @@ func main() {
 			response, _ = lsp.ProcessGoToDefinition(data, storage.openedFilesAnalyzed, storage.rawFiles)
 
 			// insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
+		case "textDocument/foldingRange":
+			isRequestResponse = true
+			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.parsedFiles, textFromClient, muTextFromClient)
 		}
 
 		if isRequestResponse {
@@ -250,39 +253,34 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 				"or that the notification wasn't fired by accident")
 		}
 
-		// TODO: handle the case where file is not in workspaceFolders
-		// the lsp should be still working, but it should not use data for the other workspace
-
 		muTextFromClient.Lock()
 
+		clear(cloneTextFromClient)
+		namesOfFileChanged := make([]string, 0, len(textFromClient))
+
 		for uri, fileContent := range textFromClient {
-			cloneTextFromClient[uri] = fileContent
-		}
-
-		clear(textFromClient)
-
-		muTextFromClient.Unlock()
-
-		namesOfFileChanged := make([]string, 0, len(cloneTextFromClient))
-
-		for uri, fileContent := range cloneTextFromClient {
 			if !isFileInsideWorkspace(uri, rootPath, targetExtension) {
-				log.Printf("oups ... this file is not considerated part of the project ::: file = %s\n", uri)
 				continue
 			}
 
-			storage.rawFiles[uri] = fileContent
-			parseTree, localErrs := gota.ParseSingleFile(fileContent)
+			storage.rawFiles[uri] = fileContent // must be done here inbetween mutex
+			cloneTextFromClient[uri] = fileContent
 
+			parseTree, localErrs := gota.ParseSingleFile(fileContent)
 			if parseTree == nil {
-				log.Printf("oups ... found an empty parseTree(file)\n fileName = `%s`\n fileContent = `%s`\n", uri, fileContent)
 				continue
 			}
 
 			storage.parsedFiles[uri] = parseTree
 			storage.ErrorsParsedFiles[uri] = localErrs
-
 			namesOfFileChanged = append(namesOfFileChanged, uri)
+		}
+
+		clear(textFromClient)
+		muTextFromClient.Unlock()
+
+		if len(cloneTextFromClient) == 0 {
+			continue
 		}
 
 		chainedFiles = nil
@@ -339,8 +337,6 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			// log.Printf("\n\nmessage sent to client :: msg = %#v\n\n", notification)
 		}
 		// }
-
-		clear(cloneTextFromClient)
 
 		if len(storage.openedFilesAnalyzed) != len(storage.parsedFiles) {
 			log.Printf("size mismatch between 'semantic analysed files' and 'parsed files'\n size analysed files = %d\n size parsed files = %d\n", len(storage.openedFilesAnalyzed), len(storage.parsedFiles))

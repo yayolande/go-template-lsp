@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
+
 	// "strings"
 
 	"github.com/yayolande/gota"
 	checker "github.com/yayolande/gota/analyzer"
 	"github.com/yayolande/gota/lexer"
+	"github.com/yayolande/gota/parser"
 )
 
 var filesOpenedByEditor = make(map[string]string)
@@ -78,9 +81,10 @@ type InitializeParams struct {
 }
 
 type ServerCapabilities struct {
-	TextDocumentSync   int  `json:"textDocumentSync"`
-	HoverProvider      bool `json:"hoverProvider"`
-	DefinitionProvider bool `json:"definitionProvider"`
+	TextDocumentSync     int  `json:"textDocumentSync"`
+	HoverProvider        bool `json:"hoverProvider"`
+	DefinitionProvider   bool `json:"definitionProvider"`
+	FoldingRangeProvider bool `json:"foldingRangeProvider"`
 }
 
 type InitializeResult struct {
@@ -102,8 +106,8 @@ type Diagnostic struct {
 	Message string `json:"message"`
 }
 
-func convertParserRangeToLspRange(parserRange *lexer.Range) Range {
-	if parserRange == nil {
+func convertParserRangeToLspRange(parserRange lexer.Range) Range {
+	if parserRange.IsEmpty() {
 		return Range{}
 	}
 
@@ -131,9 +135,10 @@ func ProcessInitializeRequest(data []byte, lspName string, lspVersion string) (r
 		Id:      req.Id,
 		Result: InitializeResult{
 			Capabilities: ServerCapabilities{
-				TextDocumentSync:   1,
-				HoverProvider:      true,
-				DefinitionProvider: true,
+				TextDocumentSync:     1,
+				HoverProvider:        true,
+				DefinitionProvider:   true,
+				FoldingRangeProvider: true,
 			},
 		},
 	}
@@ -425,7 +430,7 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 
 		result := DefinitionResults{}
 		result.Uri = targetFileNameURI
-		result.Range = convertParserRangeToLspRange(&reach)
+		result.Range = convertParserRangeToLspRange(reach)
 
 		res.Result = append(res.Result, result)
 	}
@@ -443,3 +448,102 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 	return data, fileName
 }
 
+type FoldingRangeParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+type FoldingRangeResult struct {
+	StartLine      uint             `json:"startLine"`
+	StartCharacter uint             `json:"startCharacter"`
+	EndLine        uint             `json:"endLine"`
+	EndCharacter   uint             `json:"endCharacter"`
+	Kind           FoldingRangeKind `json:"kind"`
+}
+
+type FoldingRangeKind string
+
+const (
+	foldingRangeComment FoldingRangeKind = "comment"
+	foldingRangeImport  FoldingRangeKind = "imports"
+	foldingRangeRegion  FoldingRangeKind = "region"
+)
+
+func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.GroupStatementNode, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) (response []byte, fileName string) {
+	req := RequestMessage[FoldingRangeParams]{}
+
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		log.Println("error while decoding/unmarshalling lsp client data, ", err.Error())
+		return nil, ""
+	}
+
+	var rootNode *parser.GroupStatementNode
+	fileUri := req.Params.TextDocument.Uri
+
+	muTextFromClient.Lock()
+	fileContent := textFromClient[fileUri]
+
+	if fileContent == nil { // file haven't changed since last diagnostic
+		rootNode = parsedFiles[fileUri]
+	} else { // raw file not yet parsed, parse it manually
+		rootNode, _ = gota.ParseSingleFile(fileContent)
+	}
+
+	muTextFromClient.Unlock()
+
+	if rootNode == nil {
+		panic("current file requested by lsp client is not open on the server. that file must be open for 'folding Range' to make any computation. fileName = " + fileUri)
+	}
+
+	groups, comments := gota.FoldingRange(rootNode)
+
+	var res ResponseMessage[[]FoldingRangeResult]
+	res.Id = req.Id
+	res.JsonRpc = req.JsonRpc
+
+	for _, group := range groups {
+		groupRange := group.Range()
+		reach := convertParserRangeToLspRange(groupRange)
+
+		if reach.Start.Line != reach.End.Line { // end_line > start_line
+			reach.End.Line--
+		}
+
+		fold := FoldingRangeResult{
+			StartLine:      reach.Start.Line,
+			StartCharacter: reach.Start.Character,
+			EndLine:        reach.End.Line,
+			EndCharacter:   reach.End.Character,
+			Kind:           foldingRangeRegion,
+		}
+
+		res.Result = append(res.Result, fold)
+	}
+
+	for _, comment := range comments {
+		commentRange := comment.Range()
+		reach := convertParserRangeToLspRange(commentRange)
+
+		fold := FoldingRangeResult{
+			StartLine:      reach.Start.Line,
+			StartCharacter: reach.Start.Character,
+			EndLine:        reach.End.Line,
+			EndCharacter:   reach.End.Character,
+			Kind:           foldingRangeComment,
+		}
+
+		if comment.GoCode != nil {
+			fold.Kind = foldingRangeImport
+		}
+
+		res.Result = append(res.Result, fold)
+	}
+
+	responseData, err := json.Marshal(res)
+	if err != nil {
+		log.Println("error while encoding/marshalling data for lsp client, ", err.Error())
+		return nil, fileName
+	}
+
+	return responseData, fileName
+}
