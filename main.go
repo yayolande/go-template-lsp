@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"maps"
 	"os"
@@ -29,13 +31,27 @@ type workSpaceStore struct {
 	ErrorsAnalyzedFiles map[string][]lexer.Error
 }
 
+var TARGET_FILE_EXTENSIONS []string = []string{
+	"go.html", "go.tmpl", "go.txt",
+	"gohtml", "gotmpl", "tmpl", "tpl",
+	"html",
+}
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.2"
+var SERVER_VERSION string = "0.3.3"
+var SERVER_BUILD_DATE string = "2025/12/19 22:10"
 
 func main() {
-	configureLogging()
+	// 1. Parse CLI arguments
+	isversionFlagEnabled := flag.Bool("version", false, "print the LSP version")
+	flag.Parse()
 
-	// scanner := lsp.Decode(strings.NewReader(str))
+	if *isversionFlagEnabled { // print LSP version then exit
+		fmt.Printf("%s -- version %s  %s\n", SERVER_NAME, SERVER_VERSION, SERVER_BUILD_DATE)
+		os.Exit(0)
+	}
+
+	// 2. Start LSP
+	configureLogging()
 	scanner := lsp.ReceiveInput(os.Stdin)
 
 	// ******************************************************************************
@@ -63,8 +79,6 @@ func main() {
 	// Check LSP documentation to learn how to handle those issues
 	// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize
 
-	// TODO: what if the file to process is out of the project ? For instance what happen if client request diagnostic
-	// for a file outside of the project ?
 	for scanner.Scan() {
 		data := scanner.Bytes()
 
@@ -92,8 +106,8 @@ func main() {
 
 			notifyTheRootPath(rootPathNotication, rootURI)
 			rootPathNotication = nil
-
 			isRequestResponse = true
+
 		case "initialized":
 			isRequestResponse = false
 			lsp.ProcessInitializedNotificatoin(data)
@@ -168,21 +182,18 @@ func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotif
 
 func notifyTheRootPath(rootPathNotication chan string, rootURI string) {
 	if rootPathNotication == nil {
-		panic("unexpected usage of 'rootPathNotication' channel. This channel should be used only once to send root path. " +
-			"Either it hasn't been initialized at least once, or it has been used more than once (bc. channel set to nil after first use)")
+		return // do nothing, most likely the root path has already initialized
 	}
 
-	if cap(rootPathNotication) == 1 {
+	if len(rootPathNotication) > 0 {
 		panic("'rootPathNotication' channel should be empty at this point. " +
-			"Either an element have been illegally inserted or the 'initialize' method might be the responsible")
-	}
-
-	if cap(rootPathNotication) == 1 {
+			"Either an element have been illegally inserted or the 'initialize' method might be responsible" +
+			"rootURI = " + rootURI)
+	} else if cap(rootPathNotication) < 2 {
 		panic("'rootPathNotication' channel should have a buffer capacity of at least 2, to have its blocking behavior")
 	}
 
 	rootPathNotication <- rootURI
-
 	close(rootPathNotication)
 }
 
@@ -196,9 +207,6 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		panic("empty reference to 'textFromClient'. LSP server won't be able to handle text update from client")
 	}
 
-	var rootPath string
-	var targetExtension string
-
 	rootPath, ok := <-rootPathNotication
 	rootPathNotication = nil
 	if !ok {
@@ -207,21 +215,20 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	}
 
 	rootPath = uriToFilePath(rootPath)
-	targetExtension = ".html"
-
-	// TODO: When I use the value below, I get nasty error (panic). Investigate it later on
-	// targetExtension = ".tmpl"
-	storage.rawFiles = gota.OpenProjectFiles(rootPath, targetExtension)
+	storage.rawFiles = gota.OpenProjectFiles(rootPath, TARGET_FILE_EXTENSIONS)
 
 	// Since the client only recognize URI, it is better to adopt this early
 	// on the server as well to avoid perpetual conversion from 'uri' to 'path'
 	storage.rawFiles = convertKeysFromFilePathToUri(storage.rawFiles)
 
 	muTextFromClient.Lock()
+	{
+		temporaryClone := maps.Clone(textFromClient)
+		maps.Copy(textFromClient, storage.rawFiles)
+		maps.Copy(textFromClient, temporaryClone)
+	}
 
-	maps.Copy(textFromClient, storage.rawFiles)
-
-	if len(textChangedNotification) == 0 { // Trigger analysis
+	if len(textFromClient) > 0 && len(textChangedNotification) == 0 { // Trigger analysis when files found
 		textChangedNotification <- true
 	}
 
@@ -229,7 +236,6 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	storage.parsedFiles = make(map[string]*parser.GroupStatementNode)
 	storage.openedFilesAnalyzed = make(map[string]*checker.FileDefinition)
-
 	storage.ErrorsAnalyzedFiles = make(map[string][]lexer.Error)
 	storage.ErrorsParsedFiles = make(map[string][]lexer.Error)
 
@@ -253,25 +259,25 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 				"or that the notification wasn't fired by accident")
 		}
 
+		// This mutex synchronize the 'textFromClient' resource
+		// incidently, it also protect/synchronize the shared 'storage.parsedFiles'
+		// this property is heavily used within the function 'ProcessFoldingRangeRequest()'
 		muTextFromClient.Lock()
 
 		clear(cloneTextFromClient)
 		namesOfFileChanged := make([]string, 0, len(textFromClient))
 
 		for uri, fileContent := range textFromClient {
-			if !isFileInsideWorkspace(uri, rootPath, targetExtension) {
+			if !isFileInsideWorkspace(uri, rootPath, TARGET_FILE_EXTENSIONS) {
 				continue
 			}
 
 			storage.rawFiles[uri] = fileContent // must be done here inbetween mutex
 			cloneTextFromClient[uri] = fileContent
 
-			parseTree, localErrs := gota.ParseSingleFile(fileContent)
-			if parseTree == nil {
-				continue
-			}
+			parseTree, localErrs := gota.ParseSingleFile(fileContent) // main processing
 
-			storage.parsedFiles[uri] = parseTree
+			storage.parsedFiles[uri] = parseTree // must be done here inbetween mutex
 			storage.ErrorsParsedFiles[uri] = localErrs
 			namesOfFileChanged = append(namesOfFileChanged, uri)
 		}
@@ -302,15 +308,8 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 		namesOfFileChanged = namesOfFileChanged[:0] // empty the slice
 
-		// for uri, _ := range cloneTextFromClient {
-		//chainedFiles := gota.DefinitionAnalysisChainTrigerredBysingleFileChange(uri, storage.parsedFiles)
-
-		log.Println("\n===== list of affected files =====\n")
-
 		for _, fileAnalyzed := range chainedFiles {
 			localUri := fileAnalyzed.FileName
-
-			log.Printf("<----> fileName affected = %s\n", localUri)
 
 			storage.openedFilesAnalyzed[localUri] = fileAnalyzed.File
 			storage.ErrorsAnalyzedFiles[localUri] = fileAnalyzed.Errs
@@ -333,15 +332,12 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			}
 
 			lsp.SendToLspClient(os.Stdout, response)
-
-			// log.Printf("\n\nmessage sent to client :: msg = %#v\n\n", notification)
 		}
-		// }
 
 		if len(storage.openedFilesAnalyzed) != len(storage.parsedFiles) {
 			log.Printf("size mismatch between 'semantic analysed files' and 'parsed files'\n size analysed files = %d\n size parsed files = %d\n", len(storage.openedFilesAnalyzed), len(storage.parsedFiles))
 			panic("size mismatch between 'semantic analysed files' and 'parsed files'")
-		} else if len(storage.openedFilesAnalyzed) > len(storage.rawFiles) {
+		} else if len(storage.openedFilesAnalyzed) != len(storage.rawFiles) {
 			log.Printf("found more 'semantic analysed files' than 'raw files'\n size analysed files = %d\n size raw files = %d\n", len(storage.openedFilesAnalyzed), len(storage.rawFiles))
 			panic("found more 'semantic analysed files' than 'raw files'")
 		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.ErrorsParsedFiles) {
@@ -354,7 +350,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 	}
 }
 
-func isFileInsideWorkspace(uri string, rootPath string, allowedFileExntesion string) bool {
+func isFileInsideWorkspace(uri string, rootPath string, allowedFileExntesions []string) bool {
 	path := uri
 	rootPath = filePathToUri(rootPath)
 
@@ -362,11 +358,7 @@ func isFileInsideWorkspace(uri string, rootPath string, allowedFileExntesion str
 		return false
 	}
 
-	if !strings.HasSuffix(path, allowedFileExntesion) {
-		return false
-	}
-
-	return true
+	return gota.HasFileExtension(path, allowedFileExntesions)
 }
 
 func clearPushDiagnosticNotification(notification *lsp.NotificationMessage[lsp.PublishDiagnosticsParams]) *lsp.NotificationMessage[lsp.PublishDiagnosticsParams] {
@@ -389,8 +381,9 @@ func setParseErrosToDiagnosticsNotification(errs []gota.Error, response *lsp.Not
 		}
 
 		diagnostic := lsp.Diagnostic{
-			Message: err.GetError(),
-			Range:   *fromParserRangeToLspRange(err.GetRange()),
+			Message:  err.GetError(),
+			Range:    *fromParserRangeToLspRange(err.GetRange()),
+			Severity: 1, // 1 = Error, 2 = Warning, 3 = Info, 4 = Hint
 		}
 
 		response.Params.Diagnostics = append(response.Params.Diagnostics, diagnostic)
@@ -414,9 +407,6 @@ func fromParserRangeToLspRange(rg lexer.Range) *lsp.Range {
 	return reach
 }
 
-// TODO: make this function work for windows path as well
-// Undefined behavior when the windows path use special encoding for colon(":")
-// Additionally, special character are not always well escaped between client and server
 func uriToFilePath(uri string) string {
 	if uri == "" {
 		panic("URI to a file cannot be empty")
@@ -459,9 +449,6 @@ func uriToFilePath(uri string) string {
 	return path
 }
 
-// TODO: make this function work for windows path as well
-// Undefined behavior when the windows path use special encoding for colon(":")
-// Additionally, special character are not always well escaped between client and server
 func filePathToUri(path string) string {
 	if path == "" {
 		panic("path to a file cannot be empty")

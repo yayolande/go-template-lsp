@@ -102,8 +102,9 @@ type PublishDiagnosticsParams struct {
 }
 
 type Diagnostic struct {
-	Range   Range  `json:"range"`
-	Message string `json:"message"`
+	Range    Range  `json:"range"`
+	Message  string `json:"message"`
+	Severity int    `json:"severity"`
 }
 
 func convertParserRangeToLspRange(parserRange lexer.Range) Range {
@@ -327,8 +328,6 @@ func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefiniti
 		panic("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
 	}
 
-	// targetFileNameURI, reach, errGoTo := gota.GoToDefinition(file, position)
-
 	typeStringified, reach := gota.Hover(file, position)
 
 	type HoverResult struct {
@@ -484,7 +483,10 @@ func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.Grou
 	fileContent := textFromClient[fileUri]
 
 	if fileContent == nil { // file haven't changed since last diagnostic
+		// This below is safe bc of the inderect property of 'muTextFromClient'
+		// Look at the usage of that mutex in 'ProcessDiagnosticNotification()'
 		rootNode = parsedFiles[fileUri]
+
 	} else { // raw file not yet parsed, parse it manually
 		rootNode, _ = gota.ParseSingleFile(fileContent)
 	}
