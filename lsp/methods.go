@@ -1,15 +1,11 @@
 package lsp
 
 import (
-	// "bufio"
-	// "bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"sync"
-
-	// "strings"
 
 	"github.com/yayolande/gota"
 	checker "github.com/yayolande/gota/analyzer"
@@ -127,8 +123,14 @@ func ProcessInitializeRequest(data []byte, lspName string, lspVersion string) (r
 
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
-		panic("error while unmarshalling data during 'initialize' phase, " + err.Error())
+		msg := ("error while unmarshalling data during 'initialize' phase, " + err.Error())
+		slog.Error(msg,
+			slog.Group("details",
+				slog.Any("unmarshalled_req", req),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
 
 	res := ResponseMessage[InitializeResult]{
@@ -149,8 +151,9 @@ func ProcessInitializeRequest(data []byte, lspName string, lspVersion string) (r
 
 	response, err = json.Marshal(res)
 	if err != nil {
-		log.Printf("fatal, marshalling failed \n response = %#v", res)
-		panic("error while 'marshalling' data during 'initialize' phase, " + err.Error())
+		msg := ("error while 'marshalling' data during 'initialize' phase, " + err.Error())
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	root = req.Params.RootUri
@@ -162,7 +165,7 @@ func ProcessInitializedNotificatoin(data []byte) {
 	// This is intentionally left empty since the LSP documentation do not describe anything
 	// The only reason for this notification (for now) is to register new server capabilities
 	// [Read more](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialized)
-	log.Println("Succesfully received 'initialized' notification")
+	slog.Info("Succesfully received 'initialized' notification", slog.String("data", string(data)))
 }
 
 func ProcessShutdownRequest(jsonVersion string, requestId ID) []byte {
@@ -175,8 +178,9 @@ func ProcessShutdownRequest(jsonVersion string, requestId ID) []byte {
 
 	responseText, err := json.Marshal(response)
 	if err != nil {
-		log.Println("Error while marshalling ProcessShutdownRequest: ", err.Error())
-		panic("Error while marshalling ProcessShutdownRequest: " + err.Error())
+		msg := ("Error while marshalling ProcessShutdownRequest: " + err.Error())
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	return responseText
@@ -195,8 +199,9 @@ func ProcessIllegalRequestAfterShutdown(jsonVersion string, requestId ID) []byte
 
 	responseText, err := json.Marshal(response)
 	if err != nil {
-		log.Println("Error while marshalling ProcessIllegalRequestAfterShutdown(): ", err.Error())
-		panic("Error while marshalling ProcessIllegalRequestAfterShutdown(): " + err.Error())
+		msg := ("Error while marshalling ProcessIllegalRequestAfterShutdown(): " + err.Error())
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	return responseText
@@ -218,8 +223,14 @@ func ProcessDidOpenTextDocumentNotification(data []byte) (fileURI string, fileCo
 
 	err := json.Unmarshal(data, &request)
 	if err != nil {
-		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
-		panic("error while unmarshalling data during 'textDocument/didOpen' phase, " + err.Error())
+		msg := ("error while unmarshalling data during 'textDocument/didOpen' phase, " + err.Error())
+		slog.Error(msg,
+			slog.Group("details",
+				slog.Any("unmarshalled_req", request),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
 
 	documentURI := request.Params.TextDocument.Uri
@@ -255,19 +266,31 @@ func ProcessDidChangeTextDocumentNotification(data []byte) (fileURI string, file
 
 	err := json.Unmarshal(data, &request)
 	if err != nil {
-		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
-		panic("error while unmarshalling data during 'textDocument/didChange' phase, " + err.Error())
+		msg := ("error while unmarshalling data during 'textDocument/didChange' phase, " + err.Error())
+		slog.Error(msg,
+			slog.Group("details",
+				slog.Any("unmarshalled_req", request),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
 
 	documentChanges := request.Params.ContentChanges
 	if len(documentChanges) > 1 {
-		log.Printf("fatal, unexpected data type (incremental change instead of full text). \n request = %#v\n", request)
-		panic("the server can't handle incremental change yet in 'textDocument/didChange'. " +
+		msg := ("the server can't handle incremental change yet in 'textDocument/didChange'. " +
 			"register the correct server capabilities in 'initialize' phase")
+		slog.Error(msg,
+			slog.Group("details",
+				slog.Any("unmarshalled_req", request),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
 
 	if len(documentChanges) == 0 {
-		log.Printf("error detected from client request. 'documentChanges' field cannot be empty. \n request = %#v", request)
+		slog.Warn("error detected from client request. 'documentChanges' field cannot be empty")
 		return "", nil
 	}
 
@@ -287,8 +310,14 @@ func ProcessDidCloseTextDocumentNotification(data []byte) (fileURI string, fileC
 
 	err := json.Unmarshal(data, &request)
 	if err != nil {
-		log.Printf("fatal, unmarshalling failed. \n request = %#v \n", data)
-		panic("error while unmarshalling data during 'textDocument/didClose' phase, " + err.Error())
+		msg := ("error while unmarshalling data during 'textDocument/didClose' phase, " + err.Error())
+		slog.Error(msg,
+			slog.Group("details",
+				slog.Any("unmarshalled_req", request),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
 
 	documentPath := request.Params.TextDocument.Uri
@@ -313,7 +342,7 @@ func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefiniti
 
 	err := json.Unmarshal(data, &request)
 	if err != nil {
-		log.Println("Error, unable unmarshal DidOpenTExtDocument Notification: ", err.Error())
+		slog.Warn("Error, unable unmarshal DidOpenTExtDocument Notification: " + err.Error())
 		// TODO: return appropriate error message
 		return nil
 	}
@@ -325,7 +354,15 @@ func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefiniti
 
 	file := openFiles[request.Params.TextDocument.Uri]
 	if file == nil {
-		panic("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
+		msg := ("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
+		slog.Error(msg,
+			slog.Group("details",
+				slog.String("uri", request.Params.TextDocument.Uri),
+				slog.Any("unmarshalled_req", request),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
 
 	typeStringified, reach := gota.Hover(file, position)
@@ -340,11 +377,8 @@ func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefiniti
 		Id:      request.Id,
 		Result: &HoverResult{
 			Contents: MarkupContent{
-				// Kind:  "plaintext",
 				Kind:  "markdown",
 				Value: typeStringified,
-				// Value: fmt.Sprintf("%s -- LSP", word),
-				// Value: fmt.Sprintf("%c -- LSP", character),
 			},
 			Range: convertParserRangeToLspRange(reach),
 		},
@@ -356,7 +390,7 @@ func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefiniti
 
 	responseText, err := json.Marshal(response)
 	if err != nil {
-		log.Println("Error while marshalling ResponseMessageHoverResult: ", err.Error())
+		slog.Warn("Error while marshalling ResponseMessageHoverResult: " + err.Error())
 		// TODO: Need to better handle error case
 		return nil
 	}
@@ -388,15 +422,11 @@ type DefinitionResults struct {
 }
 
 func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefinition, rawFiles map[string][]byte) (response []byte, fileName string) {
-	if len(openFiles) == 0 {
-		panic("cannot compute the source of 'go-to-definition' because no files have been opened on the server")
-	}
-
 	var req RequestMessage[DefinitionParams]
 
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		log.Println("error while decoding/unmarshalling lsp client data, ", err.Error())
+		slog.Warn("error while decoding/unmarshalling lsp client data, " + err.Error())
 		return nil, ""
 	}
 
@@ -407,8 +437,31 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 
 	currentFile := openFiles[req.Params.TextDocument.Uri]
 	if currentFile == nil {
-		panic("currentFile requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
+		msg := ("file requested by lsp client for 'go-to-definition' is not open on the server. That file must be open to make any computation")
+		slog.Error(msg,
+			slog.Group("details",
+				slog.String("uri", req.Params.TextDocument.Uri),
+				slog.Any("unmarshalled_req", req),
+				slog.String("received_req", string(data)),
+			),
+		)
+		panic(msg)
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			msg := r.(string)
+			slog.Error(msg,
+				slog.Group("details",
+					slog.String("uri", req.Params.TextDocument.Uri),
+					slog.Any("position", position),
+					slog.Any("unmarshalled_req", req),
+					slog.String("received_req", string(data)),
+				),
+			)
+			panic(msg)
+		}
+	}()
 
 	fileNames, reaches, errGoTo := gota.GoToDefinition(currentFile, position)
 
@@ -422,9 +475,16 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 		reach := reaches[index]
 
 		if targetFileNameURI == "" {
-			log.Printf("found a symbol definition without a valid fileName during 'go-to-definition'"+
-				"\n\n current file name = %s :: file def = %#v\n", currentFile.FileName(), currentFile)
-			panic("found a symbol definition without a valid fileName during 'go-to-definition'")
+			msg := ("found a symbol definition without a valid fileName during 'go-to-definition'")
+			slog.Error(msg,
+				slog.Group("details",
+					slog.String("fileName", currentFile.FileName()),
+					slog.Any("file_def", currentFile),
+					slog.Any("file_names_found", fileNames),
+					slog.Any("reaches", reaches),
+				),
+			)
+			panic(msg)
 		}
 
 		result := DefinitionResults{}
@@ -440,7 +500,7 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 
 	data, err = json.Marshal(res)
 	if err != nil {
-		log.Println("error while encoding/marshalling data for lsp client, ", err.Error())
+		slog.Warn("error while encoding/marshalling data for lsp client, " + err.Error())
 		return nil, fileName
 	}
 
@@ -472,7 +532,7 @@ func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.Grou
 
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		log.Println("error while decoding/unmarshalling lsp client data, ", err.Error())
+		slog.Warn("error while decoding/unmarshalling lsp client data, " + err.Error())
 		return nil, ""
 	}
 
@@ -493,8 +553,24 @@ func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.Grou
 
 	muTextFromClient.Unlock()
 
+	defer func() {
+		if r := recover(); r != nil {
+			msg := r.(string)
+			slog.Error(msg,
+				slog.Group("details",
+					slog.String("file_uri", fileUri),
+					slog.Any("unmarshalled_req", req),
+					slog.String("received_req", string(data)),
+					slog.String("file_content", string(fileContent)),
+					slog.Any("root_node", rootNode),
+				),
+			)
+			panic(msg)
+		}
+	}()
+
 	if rootNode == nil {
-		panic("current file requested by lsp client is not open on the server. that file must be open for 'folding Range' to make any computation. fileName = " + fileUri)
+		panic("current file requested by lsp client for 'folding range' is not open on the server. That file must be open to make any computation. fileName = " + fileUri)
 	}
 
 	groups, comments := gota.FoldingRange(rootNode)
@@ -543,7 +619,7 @@ func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.Grou
 
 	responseData, err := json.Marshal(res)
 	if err != nil {
-		log.Println("error while encoding/marshalling data for lsp client, ", err.Error())
+		slog.Warn("error while encoding/marshalling data for lsp client, " + err.Error())
 		return nil, fileName
 	}
 

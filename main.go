@@ -3,7 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+
+	"log/slog"
 	"maps"
 	"os"
 	"strings"
@@ -23,6 +24,7 @@ import (
 )
 
 type workSpaceStore struct {
+	rootPath          string
 	rawFiles          map[string][]byte
 	parsedFiles       map[string]*parser.GroupStatementNode
 	ErrorsParsedFiles map[string][]lexer.Error
@@ -31,14 +33,29 @@ type workSpaceStore struct {
 	ErrorsAnalyzedFiles map[string][]lexer.Error
 }
 
+type requestCounter struct {
+	Initialize   int
+	Initialized  int
+	Shutdown     int
+	TextDocument struct {
+		DidClose  int
+		DidOpen   int
+		DidChange int
+	}
+	FoldingRange int
+	Definition   int
+	Hover        int
+}
+
 var TARGET_FILE_EXTENSIONS []string = []string{
 	"go.html", "go.tmpl", "go.txt",
 	"gohtml", "gotmpl", "tmpl", "tpl",
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.3"
-var SERVER_BUILD_DATE string = "2025/12/19 22:10"
+var SERVER_VERSION string = "0.3.4"
+var SERVER_BUILD_DATE string = "2025/12/23 18:00"
+var serverCounter requestCounter = requestCounter{}
 
 func main() {
 	// 1. Parse CLI arguments
@@ -79,6 +96,12 @@ func main() {
 	// Check LSP documentation to learn how to handle those issues
 	// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize
 
+	slog.Info("starting lsp server",
+		slog.String("server_name", SERVER_NAME),
+		slog.String("server_version", SERVER_VERSION),
+	)
+	defer slog.Info("shutting down lsp server", GetServerGroupLogging(storage, serverCounter, request, textFromClient))
+
 	for scanner.Scan() {
 		data := scanner.Bytes()
 
@@ -99,8 +122,11 @@ func main() {
 
 		// TODO: behavior of the 'method' do not respect the LSP spec. For instance 'initialize' must only happen once
 		// However there is nothing stoping a rogue program to 'initialize' more than once, or even to not 'initialize' at all
+		slog.Info("request details", GetServerGroupLogging(storage, serverCounter, request, textFromClient))
+
 		switch request.Method {
 		case "initialize":
+			serverCounter.Initialize++
 			var rootURI string
 			response, rootURI = lsp.ProcessInitializeRequest(data, SERVER_NAME, SERVER_VERSION)
 
@@ -109,41 +135,64 @@ func main() {
 			isRequestResponse = true
 
 		case "initialized":
+			serverCounter.Initialized++
 			isRequestResponse = false
 			lsp.ProcessInitializedNotificatoin(data)
 		case "shutdown":
 			// TODO: close opened buffers and stop task analysis
+			serverCounter.Shutdown++
 			isExiting = true
 			isRequestResponse = true
 			response = lsp.ProcessShutdownRequest(request.JsonRpc, request.Id)
 
 		case "textDocument/didOpen":
+			serverCounter.TextDocument.DidOpen++
 			isRequestResponse = false
 			fileURI, fileContent = lsp.ProcessDidOpenTextDocumentNotification(data)
 
 			insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		case "textDocument/didChange":
+			serverCounter.TextDocument.DidChange++
 			isRequestResponse = false
 			fileURI, fileContent = lsp.ProcessDidChangeTextDocumentNotification(data)
 
 			insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		case "textDocument/didClose":
+			serverCounter.TextDocument.DidClose++
 			// TODO: Not sure what to do
 		case "textDocument/hover":
+			serverCounter.Hover++
 			isRequestResponse = true
 			response = lsp.ProcessHoverRequest(data, storage.openedFilesAnalyzed)
 		case "textDocument/definition":
+			serverCounter.Definition++
 			isRequestResponse = true
 			response, _ = lsp.ProcessGoToDefinition(data, storage.openedFilesAnalyzed, storage.rawFiles)
 
 			// insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		case "textDocument/foldingRange":
+			serverCounter.FoldingRange++
 			isRequestResponse = true
 			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.parsedFiles, textFromClient, muTextFromClient)
 		}
 
 		if isRequestResponse {
 			lsp.SendToLspClient(os.Stdout, response)
+
+			// INFO: This is only for debug purpose
+			res := lsp.ResponseMessage[any]{}
+			_ = json.Unmarshal(response, &res)
+			slog.Info("response details",
+				slog.Group("server",
+					slog.String("name", SERVER_NAME),
+					slog.String("version", SERVER_VERSION),
+					slog.String("root_path", storage.rootPath),
+					slog.Any("request_counter", serverCounter),
+					slog.Any("open_files", mapToKeys(storage.rawFiles)),
+					slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
+					slog.Any("last_response", res),
+				),
+			)
 		}
 
 		response = nil
@@ -151,10 +200,10 @@ func main() {
 	}
 
 	if scanner.Err() != nil {
-		log.Printf("error while closing LSP: ", scanner.Err().Error())
+		msg := "error while closing LSP: " + scanner.Err().Error()
+		slog.Error(msg)
+		panic(msg)
 	}
-
-	log.Printf("\n Shutting down Go Template LSP server")
 }
 
 // Queue like system that notify concerned goroutine when new 'text document' is received from the client.
@@ -175,8 +224,16 @@ func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotif
 	}
 
 	if len(textChangedNotification) >= 2 {
-		panic("'textChangedNotification' channel size should never exceed 1, otherwise goroutine might be blocked and nasty bug may appear. " +
+		msg := ("'textChangedNotification' channel size should never exceed 1, otherwise goroutine might be blocked and nasty bug may appear. " +
 			"as per standard, when there is at least one 'text' from client waiting to be processed, len(textChangedNotification) must remain at 1")
+		slog.Error("msg",
+			slog.Group("error_details",
+				slog.String("uri_file_to_diagnostic", uri),
+				slog.String("content_file_to_diagnostic", string(content)),
+				slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
+			),
+		)
+		panic(msg)
 	}
 }
 
@@ -186,11 +243,16 @@ func notifyTheRootPath(rootPathNotication chan string, rootURI string) {
 	}
 
 	if len(rootPathNotication) > 0 {
-		panic("'rootPathNotication' channel should be empty at this point. " +
+		msg := ("'rootPathNotication' channel should be empty at this point. " +
 			"Either an element have been illegally inserted or the 'initialize' method might be responsible" +
 			"rootURI = " + rootURI)
+		slog.Error(msg)
+		panic(msg)
+
 	} else if cap(rootPathNotication) < 2 {
-		panic("'rootPathNotication' channel should have a buffer capacity of at least 2, to have its blocking behavior")
+		msg := ("'rootPathNotication' channel should have a buffer capacity of at least 2, to have its blocking behavior")
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	rootPathNotication <- rootURI
@@ -200,21 +262,29 @@ func notifyTheRootPath(rootPathNotication chan string, rootURI string) {
 // Independently diagnostic code source and send notifications to client
 func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication chan string, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
 	if rootPathNotication == nil || textChangedNotification == nil {
-		panic("channel(s) for 'ProcessDiagnosticNotification()' not properly initialized")
+		msg := ("channel(s) for 'ProcessDiagnosticNotification()' not properly initialized")
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	if textFromClient == nil {
-		panic("empty reference to 'textFromClient'. LSP server won't be able to handle text update from client")
+		msg := ("empty reference to 'textFromClient'. LSP server won't be able to handle text update from client")
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	rootPath, ok := <-rootPathNotication
 	rootPathNotication = nil
 	if !ok {
-		panic("rootPathNotification is closed or nil within 'ProcessDiagnosticNotification()'. " +
+		msg := ("rootPathNotification is closed or nil within 'ProcessDiagnosticNotification()'. " +
 			"that channel should only emit the root path once, and then be closed right after and then never used again")
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	rootPath = uriToFilePath(rootPath)
+
+	storage.rootPath = rootPath
 	storage.rawFiles = gota.OpenProjectFiles(rootPath, TARGET_FILE_EXTENSIONS)
 
 	// Since the client only recognize URI, it is better to adopt this early
@@ -254,9 +324,11 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	for _ = range textChangedNotification {
 		if len(textFromClient) == 0 {
-			panic("got a change notification but the text from client was empty. " +
+			msg := ("got a change notification but the text from client was empty. " +
 				"check that the 'textFromClient' still point to the correct address " +
 				"or that the notification wasn't fired by accident")
+			slog.Error(msg)
+			panic(msg)
 		}
 
 		// This mutex synchronize the 'textFromClient' resource
@@ -327,25 +399,68 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 			response, err := json.Marshal(notification)
 			if err != nil {
-				log.Printf("failed marshalling for notification response. \n notification = %#v \n", notification)
-				panic("Diagnostic Handler is Unable to 'marshall' notification response, " + err.Error())
+				msg := "Diagnostic Handler is Unable to 'marshall' notification response, " + err.Error()
+				slog.Error(msg,
+					slog.Group("error",
+						slog.String("file_uri", uri),
+						slog.String("file_content", string(storage.rawFiles[uri])),
+						slog.Any("file_parse_error", errs),
+						slog.Any("notification", notification),
+					),
+				)
+				panic(msg)
 			}
 
 			lsp.SendToLspClient(os.Stdout, response)
 		}
 
 		if len(storage.openedFilesAnalyzed) != len(storage.parsedFiles) {
-			log.Printf("size mismatch between 'semantic analysed files' and 'parsed files'\n size analysed files = %d\n size parsed files = %d\n", len(storage.openedFilesAnalyzed), len(storage.parsedFiles))
-			panic("size mismatch between 'semantic analysed files' and 'parsed files'")
+			msg := "size mismatch between 'semantic analysed files' and 'parsed files'"
+			slog.Error(msg,
+				slog.Group("error_details",
+					slog.Int("len_openFilesAnalyzed", len(storage.openedFilesAnalyzed)),
+					slog.Int("len_parsedFiles", len(storage.parsedFiles)),
+					slog.Any("openedFilesAnalyzed", mapToKeys(storage.openedFilesAnalyzed)),
+					slog.Any("parsedFiles", mapToKeys(storage.parsedFiles)),
+				),
+			)
+			panic(msg)
+
 		} else if len(storage.openedFilesAnalyzed) != len(storage.rawFiles) {
-			log.Printf("found more 'semantic analysed files' than 'raw files'\n size analysed files = %d\n size raw files = %d\n", len(storage.openedFilesAnalyzed), len(storage.rawFiles))
-			panic("found more 'semantic analysed files' than 'raw files'")
+			msg := "found more 'semantic analysed files' than 'raw files'"
+			slog.Error(msg,
+				slog.Group("error_details",
+					slog.Int("len_openFilesAnalyzed", len(storage.openedFilesAnalyzed)),
+					slog.Int("len_rawFiles", len(storage.rawFiles)),
+					slog.Any("openedFilesAnalyzed", mapToKeys(storage.openedFilesAnalyzed)),
+					slog.Any("rawFiles", mapToKeys(storage.rawFiles)),
+				),
+			)
+			panic(msg)
+
 		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.ErrorsParsedFiles) {
-			log.Printf("size mismatch between 'errors semantic analysed files' and 'errors parsed files'\n size analysed files = %d\n size raw files = %d\n", len(storage.ErrorsAnalyzedFiles), len(storage.ErrorsParsedFiles))
-			panic("size mismatch between 'errors semantic analysed files' and 'errors parsed files'")
+			msg := "size mismatch between 'errors semantic analysed files' and 'errors parsed files'"
+			slog.Error(msg,
+				slog.Group("error_details",
+					slog.Int("len_errorsAnalyzedFiles", len(storage.ErrorsAnalyzedFiles)),
+					slog.Int("len_errorsParsedFiles", len(storage.ErrorsParsedFiles)),
+					slog.Any("ErrorsAnalyzedFiles", mapToKeys(storage.ErrorsAnalyzedFiles)),
+					slog.Any("ErrorsParsedFiles", mapToKeys(storage.ErrorsParsedFiles)),
+				),
+			)
+			panic(msg)
+
 		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.openedFilesAnalyzed) {
-			log.Printf("size mismatch between errors associated to files and opened files", len(storage.ErrorsAnalyzedFiles), len(storage.openedFilesAnalyzed))
-			panic("size mismatch between errors associated to files and opened files")
+			msg := "size mismatch between errors associated to files and opened files"
+			slog.Error(msg,
+				slog.Group("error_details",
+					slog.Int("len_errorsAnalyzedFiles", len(storage.ErrorsAnalyzedFiles)),
+					slog.Int("len_openedFilesAnalyzed", len(storage.openedFilesAnalyzed)),
+					slog.Any("ErrorsAnalyzedFiles", mapToKeys(storage.ErrorsAnalyzedFiles)),
+					slog.Any("openedFilesAnalyzed", mapToKeys(storage.openedFilesAnalyzed)),
+				),
+			)
+			panic(msg)
 		}
 	}
 }
@@ -370,14 +485,23 @@ func clearPushDiagnosticNotification(notification *lsp.NotificationMessage[lsp.P
 
 func setParseErrosToDiagnosticsNotification(errs []gota.Error, response *lsp.NotificationMessage[lsp.PublishDiagnosticsParams]) *lsp.NotificationMessage[lsp.PublishDiagnosticsParams] {
 	if response == nil {
-		panic("diagnostics errors cannot be appended on 'nil' response. first create the the response")
+		msg := ("diagnostics errors cannot be appended on 'nil' response. first create the the response")
+		slog.Error(msg)
+		panic(msg)
 	}
 
 	response.Params.Diagnostics = []lsp.Diagnostic{}
 
 	for _, err := range errs {
 		if err == nil {
-			panic("'nil' should not be in the error list. if you to represent an absence of error in the list, just dont insert it")
+			msg := ("'nil' should not be in the error list. if you to represent an absence of error in the list, just dont insert it")
+			slog.Error(msg,
+				slog.Group("error_details",
+					slog.Any("full_errs", errs),
+					slog.Any("partial_response", response),
+				),
+			)
+			panic(msg)
 		}
 
 		diagnostic := lsp.Diagnostic{
@@ -409,8 +533,18 @@ func fromParserRangeToLspRange(rg lexer.Range) *lsp.Range {
 
 func uriToFilePath(uri string) string {
 	if uri == "" {
-		panic("URI to a file cannot be empty")
+		msg := ("URI to a file cannot be empty")
+		slog.Error(msg)
+		panic(msg)
 	}
+
+	defer func() {
+		if err := recover(); err != nil {
+			msg, _ := err.(string)
+			slog.Error(msg, slog.String("uri_to_convert", uri))
+			panic(msg)
+		}
+	}()
 
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -451,12 +585,22 @@ func uriToFilePath(uri string) string {
 
 func filePathToUri(path string) string {
 	if path == "" {
-		panic("path to a file cannot be empty")
+		msg := ("path to a file cannot be empty")
+		slog.Error(msg)
+		panic(msg)
 	}
+
+	defer func() {
+		if err := recover(); err != nil {
+			msg, _ := err.(string)
+			slog.Error(msg, slog.String("path_to_convert", path))
+			panic(msg)
+		}
+	}()
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		panic("malformated file path")
+		panic("malformated file path; " + err.Error())
 	}
 
 	slashPath := filepath.ToSlash(absPath)
@@ -489,14 +633,37 @@ func convertKeysFromFilePathToUri(files map[string][]byte) map[string][]byte {
 	return filesWithUriKeys
 }
 
+func mapToKeys[K comparable, V any](dict map[K]V) []K {
+	list := make([]K, 0, len(dict))
+
+	for key, _ := range dict {
+		list = append(list, key)
+	}
+
+	return list
+}
+
 func configureLogging() {
 	logfileName := "log_output.txt"
 	file, err := os.Create(logfileName)
 	if err != nil {
-		panic("Error: " + err.Error())
+		panic("unable to create file for logger: " + err.Error())
 	}
 
-	// logger := log.New(file, " :: ", log.Ldate | log.Ltime | log.Lshortfile)
-	log.SetPrefix(" --> ")
-	log.SetOutput(file)
+	logger := slog.New(slog.NewJSONHandler(file, nil))
+	slog.SetDefault(logger)
+}
+
+func GetServerGroupLogging[T any](storage *workSpaceStore, counter requestCounter, request lsp.RequestMessage[T], textFromClient map[string][]byte) slog.Attr {
+	group := slog.Group("server",
+		slog.String("name", SERVER_NAME),
+		slog.String("version", SERVER_VERSION),
+		slog.String("root_path", storage.rootPath),
+		slog.Any("request_counter", counter),
+		slog.Any("open_files", mapToKeys(storage.rawFiles)),
+		slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
+		slog.Any("last_request", request),
+	)
+
+	return group
 }
