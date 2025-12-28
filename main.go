@@ -53,8 +53,8 @@ var TARGET_FILE_EXTENSIONS []string = []string{
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.4"
-var SERVER_BUILD_DATE string = "2025/12/23 18:00"
+var SERVER_VERSION string = "0.3.5"
+var SERVER_BUILD_DATE string = "2025/12/28 14:00"
 var serverCounter requestCounter = requestCounter{}
 
 func main() {
@@ -216,12 +216,13 @@ func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotif
 	}
 
 	muTextFromClient.Lock()
-	textFromClient[uri] = content
-	muTextFromClient.Unlock()
 
+	textFromClient[uri] = content
 	if len(textChangedNotification) == 0 {
 		textChangedNotification <- true
 	}
+
+	muTextFromClient.Unlock()
 
 	if len(textChangedNotification) >= 2 {
 		msg := ("'textChangedNotification' channel size should never exceed 1, otherwise goroutine might be blocked and nasty bug may appear. " +
@@ -355,6 +356,10 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		}
 
 		clear(textFromClient)
+		for _ = range len(textChangedNotification) { // clear all notifications
+			_ = <-textChangedNotification
+		}
+
 		muTextFromClient.Unlock()
 
 		if len(cloneTextFromClient) == 0 {
@@ -464,6 +469,9 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		}
 	}
 }
+
+// TODO: move noisy 'storage' check and logging to this function below
+// func storageSanityCheck(storage *workSpaceStore)
 
 func isFileInsideWorkspace(uri string, rootPath string, allowedFileExntesions []string) bool {
 	path := uri

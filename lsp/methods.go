@@ -63,8 +63,8 @@ type NotificationMessage[T any] struct {
 }
 
 type InitializeParams struct {
-	ProcessId    int                    `json:"processId"`
-	Capabilities map[string]interface{} `json:"capabilities"`
+	ProcessId    int            `json:"processId"`
+	Capabilities map[string]any `json:"capabilities"`
 	ClientInfo   struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
