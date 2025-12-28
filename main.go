@@ -24,12 +24,12 @@ import (
 )
 
 type workSpaceStore struct {
-	rootPath          string
-	rawFiles          map[string][]byte
-	parsedFiles       map[string]*parser.GroupStatementNode
+	RootPath          string
+	RawFiles          map[string][]byte
+	ParsedFiles       map[string]*parser.GroupStatementNode
 	ErrorsParsedFiles map[string][]lexer.Error
 
-	openedFilesAnalyzed map[string]*checker.FileDefinition
+	OpenedFilesAnalyzed map[string]*checker.FileDefinition
 	ErrorsAnalyzedFiles map[string][]lexer.Error
 }
 
@@ -53,8 +53,8 @@ var TARGET_FILE_EXTENSIONS []string = []string{
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.5"
-var SERVER_BUILD_DATE string = "2025/12/28 14:00"
+var SERVER_VERSION string = "0.3.6"
+var SERVER_BUILD_DATE string = "2025/12/28 14:30"
 var serverCounter requestCounter = requestCounter{}
 
 func main() {
@@ -163,17 +163,17 @@ func main() {
 		case "textDocument/hover":
 			serverCounter.Hover++
 			isRequestResponse = true
-			response = lsp.ProcessHoverRequest(data, storage.openedFilesAnalyzed)
+			response = lsp.ProcessHoverRequest(data, storage.OpenedFilesAnalyzed)
 		case "textDocument/definition":
 			serverCounter.Definition++
 			isRequestResponse = true
-			response, _ = lsp.ProcessGoToDefinition(data, storage.openedFilesAnalyzed, storage.rawFiles)
+			response, _ = lsp.ProcessGoToDefinition(data, storage.OpenedFilesAnalyzed, storage.RawFiles)
 
 			// insertTextDocumentToDiagnostic(fileURI, fileContent, textChangedNotification, textFromClient, muTextFromClient)
 		case "textDocument/foldingRange":
 			serverCounter.FoldingRange++
 			isRequestResponse = true
-			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.parsedFiles, textFromClient, muTextFromClient)
+			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.ParsedFiles, textFromClient, muTextFromClient)
 		}
 
 		if isRequestResponse {
@@ -186,9 +186,9 @@ func main() {
 				slog.Group("server",
 					slog.String("name", SERVER_NAME),
 					slog.String("version", SERVER_VERSION),
-					slog.String("root_path", storage.rootPath),
+					slog.String("root_path", storage.RootPath),
 					slog.Any("request_counter", serverCounter),
-					slog.Any("open_files", mapToKeys(storage.rawFiles)),
+					slog.Any("open_files", mapToKeys(storage.RawFiles)),
 					slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
 					slog.Any("last_response", res),
 				),
@@ -285,17 +285,17 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	rootPath = uriToFilePath(rootPath)
 
-	storage.rootPath = rootPath
-	storage.rawFiles = gota.OpenProjectFiles(rootPath, TARGET_FILE_EXTENSIONS)
+	storage.RootPath = rootPath
+	storage.RawFiles = gota.OpenProjectFiles(rootPath, TARGET_FILE_EXTENSIONS)
 
 	// Since the client only recognize URI, it is better to adopt this early
 	// on the server as well to avoid perpetual conversion from 'uri' to 'path'
-	storage.rawFiles = convertKeysFromFilePathToUri(storage.rawFiles)
+	storage.RawFiles = convertKeysFromFilePathToUri(storage.RawFiles)
 
 	muTextFromClient.Lock()
 	{
 		temporaryClone := maps.Clone(textFromClient)
-		maps.Copy(textFromClient, storage.rawFiles)
+		maps.Copy(textFromClient, storage.RawFiles)
 		maps.Copy(textFromClient, temporaryClone)
 	}
 
@@ -305,8 +305,8 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 	muTextFromClient.Unlock()
 
-	storage.parsedFiles = make(map[string]*parser.GroupStatementNode)
-	storage.openedFilesAnalyzed = make(map[string]*checker.FileDefinition)
+	storage.ParsedFiles = make(map[string]*parser.GroupStatementNode)
+	storage.OpenedFilesAnalyzed = make(map[string]*checker.FileDefinition)
 	storage.ErrorsAnalyzedFiles = make(map[string][]lexer.Error)
 	storage.ErrorsParsedFiles = make(map[string][]lexer.Error)
 
@@ -318,6 +318,17 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			Diagnostics: []lsp.Diagnostic{},
 		},
 	}
+
+	defer func() {
+		slog.Info("notif details",
+			slog.Any("len_rootPathNotication", len(rootPathNotication)),
+			slog.Any("len_textChangedNotification", len(textChangedNotification)),
+			slog.Any("open_files", mapToKeys(storage.RawFiles)),
+			slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
+			slog.Any("storage", storage),
+			slog.Any("last_notif", notification),
+		)
+	}()
 
 	// watch for client edit notification (didChange, ...)
 	var chainedFiles []gota.FileAnalysisAndError = nil
@@ -345,12 +356,12 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 				continue
 			}
 
-			storage.rawFiles[uri] = fileContent // must be done here inbetween mutex
+			storage.RawFiles[uri] = fileContent // must be done here inbetween mutex
 			cloneTextFromClient[uri] = fileContent
 
 			parseTree, localErrs := gota.ParseSingleFile(fileContent) // main processing
 
-			storage.parsedFiles[uri] = parseTree // must be done here inbetween mutex
+			storage.ParsedFiles[uri] = parseTree // must be done here inbetween mutex
 			storage.ErrorsParsedFiles[uri] = localErrs
 			namesOfFileChanged = append(namesOfFileChanged, uri)
 		}
@@ -373,11 +384,11 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		// I wanted to experiment only with the 'parsing' package,
 		// but it is too challenging to remove or comment out the analysis section
 
-		if len(cloneTextFromClient) == len(storage.parsedFiles) {
-			chainedFiles = gota.DefinitionAnalisisWithinWorkspace(storage.parsedFiles)
+		if len(cloneTextFromClient) == len(storage.ParsedFiles) {
+			chainedFiles = gota.DefinitionAnalisisWithinWorkspace(storage.ParsedFiles)
 
 		} else if len(cloneTextFromClient) > 0 {
-			chainedFiles = gota.DefinitionAnalysisChainTrigerredByBatchFileChange(storage.parsedFiles, namesOfFileChanged...)
+			chainedFiles = gota.DefinitionAnalysisChainTrigerredByBatchFileChange(storage.ParsedFiles, namesOfFileChanged...)
 
 			// } else if len(cloneTextFromClient) == 1 {
 			// chainedFiles = gota.DefinitionAnalysisChainTrigerredBysingleFileChange(namesOfFileChanged[0], storage.parsedFiles)
@@ -388,11 +399,11 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		for _, fileAnalyzed := range chainedFiles {
 			localUri := fileAnalyzed.FileName
 
-			storage.openedFilesAnalyzed[localUri] = fileAnalyzed.File
+			storage.OpenedFilesAnalyzed[localUri] = fileAnalyzed.File
 			storage.ErrorsAnalyzedFiles[localUri] = fileAnalyzed.Errs
 		}
 
-		for uri := range storage.openedFilesAnalyzed {
+		for uri := range storage.OpenedFilesAnalyzed {
 			errs := make([]gota.Error, 0, len(storage.ErrorsParsedFiles[uri])+len(storage.ErrorsAnalyzedFiles[uri]))
 
 			errs = append(errs, storage.ErrorsParsedFiles[uri]...)
@@ -408,7 +419,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 				slog.Error(msg,
 					slog.Group("error",
 						slog.String("file_uri", uri),
-						slog.String("file_content", string(storage.rawFiles[uri])),
+						slog.String("file_content", string(storage.RawFiles[uri])),
 						slog.Any("file_parse_error", errs),
 						slog.Any("notification", notification),
 					),
@@ -419,59 +430,60 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 			lsp.SendToLspClient(os.Stdout, response)
 		}
 
-		if len(storage.openedFilesAnalyzed) != len(storage.parsedFiles) {
-			msg := "size mismatch between 'semantic analysed files' and 'parsed files'"
-			slog.Error(msg,
-				slog.Group("error_details",
-					slog.Int("len_openFilesAnalyzed", len(storage.openedFilesAnalyzed)),
-					slog.Int("len_parsedFiles", len(storage.parsedFiles)),
-					slog.Any("openedFilesAnalyzed", mapToKeys(storage.openedFilesAnalyzed)),
-					slog.Any("parsedFiles", mapToKeys(storage.parsedFiles)),
-				),
-			)
-			panic(msg)
-
-		} else if len(storage.openedFilesAnalyzed) != len(storage.rawFiles) {
-			msg := "found more 'semantic analysed files' than 'raw files'"
-			slog.Error(msg,
-				slog.Group("error_details",
-					slog.Int("len_openFilesAnalyzed", len(storage.openedFilesAnalyzed)),
-					slog.Int("len_rawFiles", len(storage.rawFiles)),
-					slog.Any("openedFilesAnalyzed", mapToKeys(storage.openedFilesAnalyzed)),
-					slog.Any("rawFiles", mapToKeys(storage.rawFiles)),
-				),
-			)
-			panic(msg)
-
-		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.ErrorsParsedFiles) {
-			msg := "size mismatch between 'errors semantic analysed files' and 'errors parsed files'"
-			slog.Error(msg,
-				slog.Group("error_details",
-					slog.Int("len_errorsAnalyzedFiles", len(storage.ErrorsAnalyzedFiles)),
-					slog.Int("len_errorsParsedFiles", len(storage.ErrorsParsedFiles)),
-					slog.Any("ErrorsAnalyzedFiles", mapToKeys(storage.ErrorsAnalyzedFiles)),
-					slog.Any("ErrorsParsedFiles", mapToKeys(storage.ErrorsParsedFiles)),
-				),
-			)
-			panic(msg)
-
-		} else if len(storage.ErrorsAnalyzedFiles) != len(storage.openedFilesAnalyzed) {
-			msg := "size mismatch between errors associated to files and opened files"
-			slog.Error(msg,
-				slog.Group("error_details",
-					slog.Int("len_errorsAnalyzedFiles", len(storage.ErrorsAnalyzedFiles)),
-					slog.Int("len_openedFilesAnalyzed", len(storage.openedFilesAnalyzed)),
-					slog.Any("ErrorsAnalyzedFiles", mapToKeys(storage.ErrorsAnalyzedFiles)),
-					slog.Any("openedFilesAnalyzed", mapToKeys(storage.openedFilesAnalyzed)),
-				),
-			)
-			panic(msg)
-		}
+		storageSanityCheck(storage)
 	}
 }
 
-// TODO: move noisy 'storage' check and logging to this function below
-// func storageSanityCheck(storage *workSpaceStore)
+func storageSanityCheck(storage *workSpaceStore) {
+	if len(storage.OpenedFilesAnalyzed) != len(storage.ParsedFiles) {
+		msg := "size mismatch between 'semantic analysed files' and 'parsed files'"
+		slog.Error(msg,
+			slog.Group("error_details",
+				slog.Int("len_openFilesAnalyzed", len(storage.OpenedFilesAnalyzed)),
+				slog.Int("len_parsedFiles", len(storage.ParsedFiles)),
+				slog.Any("openedFilesAnalyzed", mapToKeys(storage.OpenedFilesAnalyzed)),
+				slog.Any("parsedFiles", mapToKeys(storage.ParsedFiles)),
+			),
+		)
+		panic(msg)
+
+	} else if len(storage.OpenedFilesAnalyzed) != len(storage.RawFiles) {
+		msg := "found more 'semantic analysed files' than 'raw files'"
+		slog.Error(msg,
+			slog.Group("error_details",
+				slog.Int("len_openFilesAnalyzed", len(storage.OpenedFilesAnalyzed)),
+				slog.Int("len_rawFiles", len(storage.RawFiles)),
+				slog.Any("openedFilesAnalyzed", mapToKeys(storage.OpenedFilesAnalyzed)),
+				slog.Any("rawFiles", mapToKeys(storage.RawFiles)),
+			),
+		)
+		panic(msg)
+
+	} else if len(storage.ErrorsAnalyzedFiles) != len(storage.ErrorsParsedFiles) {
+		msg := "size mismatch between 'errors semantic analysed files' and 'errors parsed files'"
+		slog.Error(msg,
+			slog.Group("error_details",
+				slog.Int("len_errorsAnalyzedFiles", len(storage.ErrorsAnalyzedFiles)),
+				slog.Int("len_errorsParsedFiles", len(storage.ErrorsParsedFiles)),
+				slog.Any("ErrorsAnalyzedFiles", mapToKeys(storage.ErrorsAnalyzedFiles)),
+				slog.Any("ErrorsParsedFiles", mapToKeys(storage.ErrorsParsedFiles)),
+			),
+		)
+		panic(msg)
+
+	} else if len(storage.ErrorsAnalyzedFiles) != len(storage.OpenedFilesAnalyzed) {
+		msg := "size mismatch between errors associated to files and opened files"
+		slog.Error(msg,
+			slog.Group("error_details",
+				slog.Int("len_errorsAnalyzedFiles", len(storage.ErrorsAnalyzedFiles)),
+				slog.Int("len_openedFilesAnalyzed", len(storage.OpenedFilesAnalyzed)),
+				slog.Any("ErrorsAnalyzedFiles", mapToKeys(storage.ErrorsAnalyzedFiles)),
+				slog.Any("openedFilesAnalyzed", mapToKeys(storage.OpenedFilesAnalyzed)),
+			),
+		)
+		panic(msg)
+	}
+}
 
 func isFileInsideWorkspace(uri string, rootPath string, allowedFileExntesions []string) bool {
 	path := uri
@@ -666,9 +678,9 @@ func GetServerGroupLogging[T any](storage *workSpaceStore, counter requestCounte
 	group := slog.Group("server",
 		slog.String("name", SERVER_NAME),
 		slog.String("version", SERVER_VERSION),
-		slog.String("root_path", storage.rootPath),
+		slog.String("root_path", storage.RootPath),
 		slog.Any("request_counter", counter),
-		slog.Any("open_files", mapToKeys(storage.rawFiles)),
+		slog.Any("open_files", mapToKeys(storage.RawFiles)),
 		slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
 		slog.Any("last_request", request),
 	)
