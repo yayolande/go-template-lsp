@@ -1,0 +1,1 @@
+rootProject.name = "go-template-lsp"

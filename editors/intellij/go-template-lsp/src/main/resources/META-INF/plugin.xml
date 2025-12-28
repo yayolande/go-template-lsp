@@ -1,0 +1,62 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>com.github.yayolande.go-template-lsp</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
+    <name>Go Template LSP</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://github.com/yayolande">Steve Djumo</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
+    <description><![CDATA[<h1>Go Template LSP</h1>
+        <p>The new LSP for Go Template. It provides error diagnostics and a better feedback loop while working with <em>text/template</em> and <em>html/template</em> package</p>
+        <p>Additionally, the LSP introduces a small type system in order to provide a better development experience</p>
+        <p>Read the <a href="https://github.com/yayolande/go-template-lsp?tab=readme-ov-file#usage">usage documentation</a> to learn more about the inner workings of this LSP</p>
+
+        <h2>Installation</h2>
+
+        <p>Before being able to use this plugin, you need to first install the LSP executable</p>
+        <p>Below is the recommended procedure. Make sure that the executable is in your <strong>PATH</strong></p>
+
+        <pre>go install github.com/yayolande/go-template-lsp@latest</pre>
+        <br />
+        <p>Visit <a href="https://github.com/yayolande/go-template-lsp">the project repository</a> for other installation procedures</p>
+
+        <h2>Features</h2>
+
+        <ul>
+        <li>Diagnostics</li>
+        <li>Go To Definition</li>
+        <li>Hover</li>
+        <li>Folding Range</li>
+        <li>Dependency analysis of Template call</li>
+        </ul>
+
+        <h2>Coming Soon</h2>
+
+        <ul>
+        <li>Type System</li>
+        <li>Auto Completion</li>
+        <li>Semantic Highlighting</li>
+        <li>Better ergonomics for navigation</li>
+        <li>Integration with Go Code</li>
+        <li>Code Formatter</li>
+        </ul>
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lsp</depends>
+
+    <!-- Extension points defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <platform.lsp.serverSupportProvider implementation="com.github.yayolande.gotemplatelsp.GoTemplateLspServerSupportProvider" />
+        <notificationGroup id="go-template-lsp.notifications" displayType="BALLOON" />
+    </extensions>
+</idea-plugin>
