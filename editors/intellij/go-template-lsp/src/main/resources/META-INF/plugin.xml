@@ -13,9 +13,9 @@
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[<h1>Go Template LSP</h1>
-        <p>The new LSP for Go Template. It provides error diagnostics and a better feedback loop while working with <em>text/template</em> and <em>html/template</em> package</p>
-        <p>Additionally, the LSP introduces a small type system in order to provide a better development experience</p>
-        <p>Read the <a href="https://github.com/yayolande/go-template-lsp?tab=readme-ov-file#usage">usage documentation</a> to learn more about the inner workings of this LSP</p>
+        <p>Add LSP support and a better feedback loop while working with <em>text/template</em> and <em>html/template</em> package</p>
+        <p>Additionally, the LSP introduces a type system in order to provide a better development experience</p>
+        <p>Read the <a href="https://github.com/yayolande/go-template-lsp?tab=readme-ov-file#usage">usage documentation</a> to learn more about the LSP's inner workings</p>
 
         <h2>Installation</h2>
 

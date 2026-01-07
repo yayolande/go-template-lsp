@@ -40,7 +40,7 @@ class GoTemplateLspServerSupportProvider : LspServerSupportProvider {
         var status = -1
         val executableName = if(SystemInfo.isWindows) "$binayName.exe" else binayName
         try {
-            val process = ProcessBuilder(executableName, "--version").start()
+            val process = ProcessBuilder(executableName, "-version").start()
             status = process.waitFor()
         } catch (e: IOException) {
             e.printStackTrace()
