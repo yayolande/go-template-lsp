@@ -536,19 +536,20 @@ func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.Grou
 		return nil, ""
 	}
 
-	var rootNode *parser.GroupStatementNode
+	var rootNode *parser.GroupStatementNode = nil
 	fileUri := req.Params.TextDocument.Uri
 
 	muTextFromClient.Lock()
 	fileContent := textFromClient[fileUri]
 
-	if fileContent == nil { // file haven't changed since last diagnostic
+	if fileContent != nil {
+		rootNode, _ = gota.ParseSingleFile(fileContent)
+	}
+
+	if rootNode == nil { // no new file update found, process the existing one
 		// This below is safe bc of the inderect property of 'muTextFromClient'
 		// Look at the usage of that mutex in 'ProcessDiagnosticNotification()'
 		rootNode = parsedFiles[fileUri]
-
-	} else { // raw file not yet parsed, parse it manually
-		rootNode, _ = gota.ParseSingleFile(fileContent)
 	}
 
 	muTextFromClient.Unlock()

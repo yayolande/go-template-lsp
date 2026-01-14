@@ -45,6 +45,7 @@ type requestCounter struct {
 	FoldingRange int
 	Definition   int
 	Hover        int
+	Other        int
 }
 
 var TARGET_FILE_EXTENSIONS []string = []string{
@@ -53,8 +54,8 @@ var TARGET_FILE_EXTENSIONS []string = []string{
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.6"
-var SERVER_BUILD_DATE string = "2025/12/28 14:30"
+var SERVER_VERSION string = "0.3.7"
+var SERVER_BUILD_DATE string = "2026/01/10 20:00"
 var serverCounter requestCounter = requestCounter{}
 
 func main() {
@@ -122,7 +123,7 @@ func main() {
 
 		// TODO: behavior of the 'method' do not respect the LSP spec. For instance 'initialize' must only happen once
 		// However there is nothing stoping a rogue program to 'initialize' more than once, or even to not 'initialize' at all
-		slog.Info("request details", GetServerGroupLogging(storage, serverCounter, request, textFromClient))
+		slog.Info("request "+request.Method, GetServerGroupLogging(storage, serverCounter, request, textFromClient))
 
 		switch request.Method {
 		case "initialize":
@@ -174,6 +175,8 @@ func main() {
 			serverCounter.FoldingRange++
 			isRequestResponse = true
 			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.ParsedFiles, textFromClient, muTextFromClient)
+		default:
+			serverCounter.Other++
 		}
 
 		if isRequestResponse {
@@ -182,7 +185,7 @@ func main() {
 			// INFO: This is only for debug purpose
 			res := lsp.ResponseMessage[any]{}
 			_ = json.Unmarshal(response, &res)
-			slog.Info("response details",
+			slog.Info("response "+request.Method,
 				slog.Group("server",
 					slog.String("name", SERVER_NAME),
 					slog.String("version", SERVER_VERSION),
@@ -211,13 +214,13 @@ func main() {
 // In other word, if the same document is inserted many time, only the most recent will be processed when
 // concerned goroutine is ready to do so
 func insertTextDocumentToDiagnostic(uri string, content []byte, textChangedNotification chan bool, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) {
-	if len(content) == 0 || uri == "" {
+	if uri == "" {
 		return
 	}
 
 	muTextFromClient.Lock()
-
 	textFromClient[uri] = content
+
 	if len(textChangedNotification) == 0 {
 		textChangedNotification <- true
 	}
@@ -344,7 +347,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 		}
 
 		// This mutex synchronize the 'textFromClient' resource
-		// incidently, it also protect/synchronize the shared 'storage.parsedFiles'
+		// incidently, it also protect/synchronize the shared 'storage.parsedFiles' and 'storage.RawFiles'
 		// this property is heavily used within the function 'ProcessFoldingRangeRequest()'
 		muTextFromClient.Lock()
 
@@ -353,6 +356,7 @@ func ProcessDiagnosticNotification(storage *workSpaceStore, rootPathNotication c
 
 		for uri, fileContent := range textFromClient {
 			if !isFileInsideWorkspace(uri, rootPath, TARGET_FILE_EXTENSIONS) {
+				slog.Warn("skiped file", slog.String("file_uri", uri))
 				continue
 			}
 
@@ -663,11 +667,38 @@ func mapToKeys[K comparable, V any](dict map[K]V) []K {
 	return list
 }
 
-func configureLogging() {
-	logfileName := "log_output.txt"
-	file, err := os.Create(logfileName)
+func createLogFile() *os.File {
+	userCachePath, err := os.UserCacheDir()
 	if err != nil {
-		panic("unable to create file for logger: " + err.Error())
+		return os.Stdout
+	}
+
+	appCachePath := filepath.Join(userCachePath, "go-template-lsp")
+	logFilePath := filepath.Join(appCachePath, "go-template-lsp.log")
+
+	_ = os.Mkdir(appCachePath, os.ModePerm)
+
+	fileInfo, err := os.Stat(logFilePath)
+	if err == nil && fileInfo.Size() >= 5_000_000 { // if file exist and size > 5Mo, trunc/empty the file content
+		file, err := os.OpenFile(logFilePath, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+		if err != nil {
+			return os.Stdout
+		}
+		return file
+	}
+
+	file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	if err != nil {
+		return os.Stdout
+	}
+
+	return file
+}
+
+func configureLogging() {
+	file := createLogFile()
+	if file == nil {
+		file = os.Stdout
 	}
 
 	logger := slog.New(slog.NewJSONHandler(file, nil))
@@ -676,13 +707,11 @@ func configureLogging() {
 
 func GetServerGroupLogging[T any](storage *workSpaceStore, counter requestCounter, request lsp.RequestMessage[T], textFromClient map[string][]byte) slog.Attr {
 	group := slog.Group("server",
-		slog.String("name", SERVER_NAME),
-		slog.String("version", SERVER_VERSION),
 		slog.String("root_path", storage.RootPath),
-		slog.Any("request_counter", counter),
+		slog.Any("last_request", request),
 		slog.Any("open_files", mapToKeys(storage.RawFiles)),
 		slog.Any("files_waiting_processing", mapToKeys(textFromClient)),
-		slog.Any("last_request", request),
+		slog.Any("request_counter", counter),
 	)
 
 	return group
