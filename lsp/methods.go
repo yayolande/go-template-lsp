@@ -527,7 +527,7 @@ const (
 	foldingRangeRegion  FoldingRangeKind = "region"
 )
 
-func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.GroupStatementNode, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) (response []byte, fileName string) {
+func ProcessFoldingRangeRequest(data []byte, rawFiles map[string][]byte, parsedFiles map[string]*parser.GroupStatementNode, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) (response []byte, fileName string) {
 	req := RequestMessage[FoldingRangeParams]{}
 
 	err := json.Unmarshal(data, &req)
@@ -550,6 +550,14 @@ func ProcessFoldingRangeRequest(data []byte, parsedFiles map[string]*parser.Grou
 		// This below is safe bc of the inderect property of 'muTextFromClient'
 		// Look at the usage of that mutex in 'ProcessDiagnosticNotification()'
 		rootNode = parsedFiles[fileUri]
+	}
+
+	// fallback
+	if rootNode == nil {
+		fileContent, ok := rawFiles[fileUri]
+		if ok {
+			rootNode, _ = gota.ParseSingleFile(fileContent)
+		}
 	}
 
 	muTextFromClient.Unlock()

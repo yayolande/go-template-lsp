@@ -54,7 +54,7 @@ var TARGET_FILE_EXTENSIONS []string = []string{
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.7"
+var SERVER_VERSION string = "0.3.8"
 var SERVER_BUILD_DATE string = "2026/01/10 20:00"
 var serverCounter requestCounter = requestCounter{}
 
@@ -174,7 +174,7 @@ func main() {
 		case "textDocument/foldingRange":
 			serverCounter.FoldingRange++
 			isRequestResponse = true
-			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.ParsedFiles, textFromClient, muTextFromClient)
+			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.RawFiles, storage.ParsedFiles, textFromClient, muTextFromClient)
 		default:
 			serverCounter.Other++
 		}
