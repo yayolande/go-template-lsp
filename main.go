@@ -23,6 +23,9 @@ import (
 	"github.com/yayolande/gota/parser"
 )
 
+type workSpaceStore = lsp.WorkSpaceStore
+
+/*
 type workSpaceStore struct {
 	RootPath          string
 	RawFiles          map[string][]byte
@@ -32,6 +35,7 @@ type workSpaceStore struct {
 	OpenedFilesAnalyzed map[string]*checker.FileDefinition
 	ErrorsAnalyzedFiles map[string][]lexer.Error
 }
+*/
 
 type requestCounter struct {
 	Initialize   int
@@ -54,8 +58,8 @@ var TARGET_FILE_EXTENSIONS []string = []string{
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.8"
-var SERVER_BUILD_DATE string = "2026/01/10 20:00"
+var SERVER_VERSION string = "0.3.9"
+var SERVER_BUILD_DATE string = "2026/01/20 16:00"
 var serverCounter requestCounter = requestCounter{}
 
 func main() {
@@ -174,7 +178,7 @@ func main() {
 		case "textDocument/foldingRange":
 			serverCounter.FoldingRange++
 			isRequestResponse = true
-			response, _ = lsp.ProcessFoldingRangeRequest(data, storage.RawFiles, storage.ParsedFiles, textFromClient, muTextFromClient)
+			response, _ = lsp.ProcessFoldingRangeRequest(data, storage, textFromClient, muTextFromClient)
 		default:
 			serverCounter.Other++
 		}

@@ -15,6 +15,16 @@ import (
 
 var filesOpenedByEditor = make(map[string]string)
 
+type WorkSpaceStore struct {
+	RootPath          string
+	RawFiles          map[string][]byte
+	ParsedFiles       map[string]*parser.GroupStatementNode
+	ErrorsParsedFiles map[string][]lexer.Error
+
+	OpenedFilesAnalyzed map[string]*checker.FileDefinition
+	ErrorsAnalyzedFiles map[string][]lexer.Error
+}
+
 type ID int
 
 func (id *ID) UnmarshalJSON(data []byte) error {
@@ -527,7 +537,10 @@ const (
 	foldingRangeRegion  FoldingRangeKind = "region"
 )
 
-func ProcessFoldingRangeRequest(data []byte, rawFiles map[string][]byte, parsedFiles map[string]*parser.GroupStatementNode, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) (response []byte, fileName string) {
+// The first folding request is not garantied to succeed because if the first the client
+// send the first folding request before all initial project wide diagnostics are done,
+// then 'storage' will not have all files content
+func ProcessFoldingRangeRequest(data []byte, storage *WorkSpaceStore, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) (response []byte, fileName string) {
 	req := RequestMessage[FoldingRangeParams]{}
 
 	err := json.Unmarshal(data, &req)
@@ -536,31 +549,8 @@ func ProcessFoldingRangeRequest(data []byte, rawFiles map[string][]byte, parsedF
 		return nil, ""
 	}
 
-	var rootNode *parser.GroupStatementNode = nil
 	fileUri := req.Params.TextDocument.Uri
-
-	muTextFromClient.Lock()
-	fileContent := textFromClient[fileUri]
-
-	if fileContent != nil {
-		rootNode, _ = gota.ParseSingleFile(fileContent)
-	}
-
-	if rootNode == nil { // no new file update found, process the existing one
-		// This below is safe bc of the inderect property of 'muTextFromClient'
-		// Look at the usage of that mutex in 'ProcessDiagnosticNotification()'
-		rootNode = parsedFiles[fileUri]
-	}
-
-	// fallback
-	if rootNode == nil {
-		fileContent, ok := rawFiles[fileUri]
-		if ok {
-			rootNode, _ = gota.ParseSingleFile(fileContent)
-		}
-	}
-
-	muTextFromClient.Unlock()
+	rootNode := getParseTreeForExistingFile(fileUri, storage, textFromClient, muTextFromClient)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -570,17 +560,13 @@ func ProcessFoldingRangeRequest(data []byte, rawFiles map[string][]byte, parsedF
 					slog.String("file_uri", fileUri),
 					slog.Any("unmarshalled_req", req),
 					slog.String("received_req", string(data)),
-					slog.String("file_content", string(fileContent)),
+					slog.String("file_content", string(storage.RawFiles[fileUri])),
 					slog.Any("root_node", rootNode),
 				),
 			)
 			panic(msg)
 		}
 	}()
-
-	if rootNode == nil {
-		panic("current file requested by lsp client for 'folding range' is not open on the server. That file must be open to make any computation. fileName = " + fileUri)
-	}
 
 	groups, comments := gota.FoldingRange(rootNode)
 
@@ -633,4 +619,31 @@ func ProcessFoldingRangeRequest(data []byte, rawFiles map[string][]byte, parsedF
 	}
 
 	return responseData, fileName
+}
+
+func getParseTreeForExistingFile(uri string, storage *WorkSpaceStore, textFromClient map[string][]byte, muTextFromClient *sync.Mutex) *parser.GroupStatementNode {
+	var rootNode *parser.GroupStatementNode = nil
+
+	muTextFromClient.Lock()
+	defer muTextFromClient.Unlock()
+
+	fileContent, ok := textFromClient[uri]
+	if ok {
+		rootNode, _ = gota.ParseSingleFile(fileContent)
+		return rootNode
+	}
+
+	rootNode, ok = storage.ParsedFiles[uri]
+	if ok {
+		return rootNode
+	}
+
+	// fallback
+	fileContent, ok = storage.RawFiles[uri]
+	if ok {
+		rootNode, _ = gota.ParseSingleFile(fileContent)
+		return rootNode
+	}
+
+	return nil
 }
