@@ -58,8 +58,8 @@ var TARGET_FILE_EXTENSIONS []string = []string{
 	"html",
 }
 var SERVER_NAME string = "Go Template LSP"
-var SERVER_VERSION string = "0.3.9"
-var SERVER_BUILD_DATE string = "2026/01/20 16:00"
+var SERVER_VERSION string = "0.3.10"
+var SERVER_BUILD_DATE string = "2026/01/22 18:00"
 var serverCounter requestCounter = requestCounter{}
 
 func main() {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"sync"
 
@@ -166,7 +167,16 @@ func ProcessInitializeRequest(data []byte, lspName string, lspVersion string) (r
 		panic(msg)
 	}
 
-	root = req.Params.RootUri
+	root, err = url.PathUnescape(req.Params.RootUri) // needed for windows os
+	if err != nil {
+		slog.Error("root uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("root_uri", req.Params.RootUri),
+				slog.Any("request_info", req),
+			),
+		)
+		root = "file://root_uri_malformated_error"
+	}
 
 	return response, root
 }
@@ -243,7 +253,17 @@ func ProcessDidOpenTextDocumentNotification(data []byte) (fileURI string, fileCo
 		panic(msg)
 	}
 
-	documentURI := request.Params.TextDocument.Uri
+	documentURI, err := url.PathUnescape(request.Params.TextDocument.Uri) // needed for windows os
+	if err != nil {
+		slog.Error("file uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("file_uri", request.Params.TextDocument.Uri),
+				slog.Any("request_info", request),
+			),
+		)
+		documentURI = request.Params.TextDocument.Uri
+	}
+
 	documentContent := request.Params.TextDocument.Text
 	filesOpenedByEditor[documentURI] = documentContent
 
@@ -304,8 +324,18 @@ func ProcessDidChangeTextDocumentNotification(data []byte) (fileURI string, file
 		return "", nil
 	}
 
+	documentURI, err := url.PathUnescape(request.Params.TextDocument.Uri) // needed for windows os
+	if err != nil {
+		slog.Error("file uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("file_uri", request.Params.TextDocument.Uri),
+				slog.Any("request_info", request),
+			),
+		)
+		documentURI = request.Params.TextDocument.Uri
+	}
+
 	documentContent := documentChanges[0].Text
-	documentURI := request.Params.TextDocument.Uri
 	filesOpenedByEditor[documentURI] = documentContent
 
 	return documentURI, []byte(documentContent)
@@ -330,7 +360,17 @@ func ProcessDidCloseTextDocumentNotification(data []byte) (fileURI string, fileC
 		panic(msg)
 	}
 
-	documentPath := request.Params.TextDocument.Uri
+	documentPath, err := url.PathUnescape(request.Params.TextDocument.Uri) // needed for windows os
+	if err != nil {
+		slog.Error("file uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("file_uri", request.Params.TextDocument.Uri),
+				slog.Any("request_info", request),
+			),
+		)
+		documentPath = request.Params.TextDocument.Uri
+	}
+
 	documentContent := request.Params.TextDocument.Text
 	delete(filesOpenedByEditor, documentPath)
 
@@ -362,7 +402,18 @@ func ProcessHoverRequest(data []byte, openFiles map[string]*checker.FileDefiniti
 		Character: int(request.Params.Position.Character),
 	}
 
-	file := openFiles[request.Params.TextDocument.Uri]
+	fileUri, err := url.PathUnescape(request.Params.TextDocument.Uri) // needed for windows os
+	if err != nil {
+		slog.Error("file uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("file_uri", request.Params.TextDocument.Uri),
+				slog.Any("request_info", request),
+			),
+		)
+		fileUri = request.Params.TextDocument.Uri
+	}
+
+	file := openFiles[fileUri]
 	if file == nil {
 		msg := ("file requested by lsp client is not open on the server. that file must be open for 'go-to-definition' to make any computation")
 		slog.Error(msg,
@@ -445,7 +496,18 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 		Character: int(req.Params.Position.Character),
 	}
 
-	currentFile := openFiles[req.Params.TextDocument.Uri]
+	fileUri, err := url.PathUnescape(req.Params.TextDocument.Uri) // needed for windows os
+	if err != nil {
+		slog.Error("file uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("file_uri", req.Params.TextDocument.Uri),
+				slog.Any("request_info", req),
+			),
+		)
+		fileUri = req.Params.TextDocument.Uri
+	}
+
+	currentFile := openFiles[fileUri]
 	if currentFile == nil {
 		msg := ("file requested by lsp client for 'go-to-definition' is not open on the server. That file must be open to make any computation")
 		slog.Error(msg,
@@ -549,7 +611,17 @@ func ProcessFoldingRangeRequest(data []byte, storage *WorkSpaceStore, textFromCl
 		return nil, ""
 	}
 
-	fileUri := req.Params.TextDocument.Uri
+	fileUri, err := url.PathUnescape(req.Params.TextDocument.Uri)
+	if err != nil {
+		slog.Error("file uri received from client is malformated. "+err.Error(),
+			slog.Group("details",
+				slog.String("file_uri", req.Params.TextDocument.Uri),
+				slog.Any("request_info", req),
+			),
+		)
+		fileUri = req.Params.TextDocument.Uri
+	}
+
 	rootNode := getParseTreeForExistingFile(fileUri, storage, textFromClient, muTextFromClient)
 
 	defer func() {
