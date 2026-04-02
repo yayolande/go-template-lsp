@@ -546,7 +546,10 @@ func ProcessGoToDefinition(data []byte, openFiles map[string]*checker.FileDefini
 		targetFileNameURI := fileNames[index]
 		reach := reaches[index]
 
-		if targetFileNameURI == "" {
+		switch targetFileNameURI {
+		case "builtin":
+			continue
+		case "":
 			msg := ("found a symbol definition without a valid fileName during 'go-to-definition'")
 			slog.Error(msg,
 				slog.Group("details",
