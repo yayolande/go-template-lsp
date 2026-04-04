@@ -1,0 +1,91 @@
+{
+  "name": "go-template-ls",
+  "displayName": "Go Template LSP",
+  "description": "The long awaited LSP for Go template providing diagnostics, go to definition, auto completion, and more at your fingertips",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "author": {
+    "name": "Steve Djumo"
+  },
+  "publisher": "yayolande",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yayolande/go-template-lsp"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:go-tmpl"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "go-template-lsp.launch-debug",
+        "title": "Manually Launch Go Template LSP"
+      }
+    ],
+    "languages": [
+      {
+        "id": "go-tmpl",
+        "extensions": [
+          ".tpl",
+          ".tmpl",
+          ".gotmpl",
+          ".gohtml",
+          ".html"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "Go Template LSP",
+      "type": "object",
+      "properties": {
+        "lsp.executableName": {
+          "type": "string",
+          "default": "go-template-lsp",
+          "description": "executable name if avaible in 'PATH'; otherwise give the full path to the executable"
+        },
+        "lsp.outputChannel": {
+          "type": "string",
+          "default": "Go Template LSP",
+          "description": "Output channel name used by the extension internal"
+        }
+      }
+    }
+  },
+  "keywords": [
+    "go template",
+    "go-template-lsp",
+    "html/template",
+    "text/template",
+    "template",
+    "lsp"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.104.0",
+    "@typescript-eslint/eslint-plugin": "^8.45.0",
+    "@typescript-eslint/parser": "^8.45.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.36.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

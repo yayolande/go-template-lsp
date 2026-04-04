@@ -11,9 +11,7 @@ You will never again need to download a dependency to replace the good and relia
 - Static sites (Hugo, etc.)  
 - Any project using Go templates
 
-Below is an early version of the LSP in action (diagnostics)
-
-![diagnostics image for Go Template](assets/examples_1.png)
+![Diagnostics image for Go Template](./assets/00.banner.png)
 
 ## Table Of Contents
 
@@ -22,9 +20,10 @@ Below is an early version of the LSP in action (diagnostics)
   - [Recommended](#recommended)
   - [Build From Source](#build-from-source)
 - [Editor Setup](#editor-setup)
+  - [VS Code](#vs-code)
+  - [IntelliJ IDEA / GoLand](#intellij-idea--goland)
   - [Neovim](#neovim)
   - [Helix](#helix)
-  - [VS Code](#vs-code)
 - [Usage](#usage)
   - [Embedded Go Code](#embedded-go-code)
   - [Type Inference](#type-inference)
@@ -36,8 +35,10 @@ Below is an early version of the LSP in action (diagnostics)
 ## Features
 
 - Diagnostics
+- Type system
 - Go To Definition
 - Hover
+- Folding Range
 - Dependency analysis of Template call
 
 ## Installation
@@ -61,6 +62,14 @@ go build
 Then add the executable to your `$PATH`
 
 ## Editor Setup
+
+### VS Code
+
+Install the extension from the [vscode marketplace](https://marketplace.visualstudio.com/items?itemName=yayolande.go-template-ls)
+
+### IntelliJ IDEA / GoLand
+
+Install the extension from [jetbrains marketplace](https://plugins.jetbrains.com/plugin/29548-go-template-lsp)
 
 ### Neovim
 
@@ -98,11 +107,6 @@ language-servers = ["go-template-lsp", "vscode-html-language-server"]
 [language-server.go-template-lsp]
 command = "go-template-lsp"
 ```
-
-### VS Code
-
-Coming Soon
-
 ## Usage
 
 Go Template does not have a type system; it mainly relies on reflection and runtime check.
@@ -471,8 +475,8 @@ Others are coming soon enough
 - [x] Diagnostics
 - [x] Hover
 - [x] Go To Definition
-- [ ] Type System
-- [ ] Better Editor Support (VS Code, Nvim distribution, Vim)
+- [x] Type System
+- [x] Better Editor Support (VS Code, Nvim distribution, Vim)
 - [ ] Auto-Completion
 - [ ] Semantic Highlighting
 - [ ] Code Formatter
@@ -481,10 +485,9 @@ Others are coming soon enough
 
 ## Back Logs
 
-- [ ] Alter parse tree and tokens so that partial tree is returned when error occurs, rather than returning nil (this will help returning better diagnostics, especially for group node)
 - [ ] Fix bug for which diagnostics are not displaying for 'define' group node sometimes
-- [ ] Builtin functions types are not implemented yet, and make the program crash
-- [ ] Extend supported files to '.tmpl', '.tpl', '.gohtml' (while reading from disk & LSP)
+- [x] Builtin functions types are not implemented yet, and make the program crash
+- [x] Extend supported files to '.tmpl', '.tpl', '.gohtml' (while reading from disk & LSP)
 - [ ] Go To Implementation, Declaration, Type
 - [ ] Special command for faster navigation & symbol information
 - [ ] Documentation on how to use LSP features
